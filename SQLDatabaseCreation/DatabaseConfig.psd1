@@ -3,7 +3,7 @@
     SqlInstance = "YourSQLServerInstance"
 
     # Database Configuration
-    Database = {
+    Database = @{
         Name = "DB_MSS0_DEMO"
         DataDrive = "G"
         LogDrive = "L"
@@ -11,7 +11,7 @@
     }
 
     # File Configuration
-    FileSizes = {
+    FileSizes = @{
         DataSize = "200MB"
         DataGrowth = "100MB"
         LogSize = "100MB"
