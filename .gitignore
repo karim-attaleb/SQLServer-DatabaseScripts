@@ -1,0 +1,7 @@
+*.log
+TestResults/
+TestResult.xml
+coverage.xml
+*.coverage
+.vs/
+.vscode/
