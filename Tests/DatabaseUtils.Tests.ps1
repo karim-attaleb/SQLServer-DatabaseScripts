@@ -177,6 +177,138 @@ Describe "Initialize-Directories" {
             Should -Invoke Write-Log -Times 0
         }
     }
+
+Describe "Test-DbaSufficientDiskSpace" {
+    Context "When drives have sufficient space" {
+        BeforeAll {
+            Mock Get-DbaDiskSpace {
+                return @(
+                    [PSCustomObject]@{
+                        Name = "G:"
+                        Free = 50GB
+                        Size = 100GB
+                    },
+                    [PSCustomObject]@{
+                        Name = "L:"
+                        Free = 20GB
+                        Size = 50GB
+                    }
+                )
+            }
+        }
+        
+        It "Should return true when both drives have enough space" {
+            Test-DbaSufficientDiskSpace -SqlInstance "localhost" -DataDrive "G" -LogDrive "L" -NumberOfDataFiles 4 -DataSize "200MB" -LogSize "100MB" | Should -Be $true
+        }
+        
+        It "Should return true with custom safety margin" {
+            Test-DbaSufficientDiskSpace -SqlInstance "localhost" -DataDrive "G" -LogDrive "L" -NumberOfDataFiles 4 -DataSize "200MB" -LogSize "100MB" -SafetyMarginPercent 20 | Should -Be $true
+        }
+    }
+    
+    Context "When drives have insufficient space" {
+        BeforeAll {
+            Mock Get-DbaDiskSpace {
+                return @(
+                    [PSCustomObject]@{
+                        Name = "G:"
+                        Free = 500MB
+                        Size = 100GB
+                    },
+                    [PSCustomObject]@{
+                        Name = "L:"
+                        Free = 50MB
+                        Size = 50GB
+                    }
+                )
+            }
+        }
+        
+        It "Should return false when data drive has insufficient space" {
+            Test-DbaSufficientDiskSpace -SqlInstance "localhost" -DataDrive "G" -LogDrive "L" -NumberOfDataFiles 4 -DataSize "200MB" -LogSize "100MB" -ErrorAction SilentlyContinue | Should -Be $false
+        }
+        
+        It "Should return false when log drive has insufficient space" {
+            Mock Get-DbaDiskSpace {
+                return @(
+                    [PSCustomObject]@{
+                        Name = "G:"
+                        Free = 50GB
+                        Size = 100GB
+                    },
+                    [PSCustomObject]@{
+                        Name = "L:"
+                        Free = 50MB
+                        Size = 50GB
+                    }
+                )
+            }
+            Test-DbaSufficientDiskSpace -SqlInstance "localhost" -DataDrive "G" -LogDrive "L" -NumberOfDataFiles 4 -DataSize "200MB" -LogSize "500MB" -ErrorAction SilentlyContinue | Should -Be $false
+        }
+    }
+    
+    Context "When data and log share the same drive" {
+        BeforeAll {
+            Mock Get-DbaDiskSpace {
+                return @(
+                    [PSCustomObject]@{
+                        Name = "G:"
+                        Free = 2GB
+                        Size = 100GB
+                    }
+                )
+            }
+        }
+        
+        It "Should check combined space requirement for same drive" {
+            Test-DbaSufficientDiskSpace -SqlInstance "localhost" -DataDrive "G" -LogDrive "G" -NumberOfDataFiles 4 -DataSize "200MB" -LogSize "100MB" | Should -Be $true
+        }
+        
+        It "Should return false if combined requirement exceeds available" {
+            Mock Get-DbaDiskSpace {
+                return @(
+                    [PSCustomObject]@{
+                        Name = "G:"
+                        Free = 800MB
+                        Size = 100GB
+                    }
+                )
+            }
+            Test-DbaSufficientDiskSpace -SqlInstance "localhost" -DataDrive "G" -LogDrive "G" -NumberOfDataFiles 4 -DataSize "200MB" -LogSize "100MB" -ErrorAction SilentlyContinue | Should -Be $false
+        }
+    }
+    
+    Context "When drive is not found" {
+        BeforeAll {
+            Mock Get-DbaDiskSpace {
+                return @(
+                    [PSCustomObject]@{
+                        Name = "C:"
+                        Free = 50GB
+                        Size = 100GB
+                    }
+                )
+            }
+        }
+        
+        It "Should return false and write error when data drive not found" {
+            Test-DbaSufficientDiskSpace -SqlInstance "localhost" -DataDrive "G" -LogDrive "L" -NumberOfDataFiles 4 -DataSize "200MB" -LogSize "100MB" -ErrorAction SilentlyContinue | Should -Be $false
+        }
+    }
+    
+    Context "When Get-DbaDiskSpace fails" {
+        BeforeAll {
+            Mock Get-DbaDiskSpace {
+                throw "Access denied"
+            }
+        }
+        
+        It "Should throw error when disk space check fails" {
+            { Test-DbaSufficientDiskSpace -SqlInstance "localhost" -DataDrive "G" -LogDrive "L" -NumberOfDataFiles 4 -DataSize "200MB" -LogSize "100MB" } | Should -Throw
+        }
+    }
+}
+
     
     Context "When directory creation fails" {
         BeforeAll {

@@ -35,11 +35,12 @@
     The script will:
     1. Validate SQL Server connection
     2. Create necessary directories
-    3. Check if database already exists
-    4. Calculate optimal number of data files (if ExpectedDatabaseSize is specified)
-    5. Create database with specified files
-    6. Set database owner to 'sa'
-    7. Enable Query Store (SQL Server 2016+)
+    3. Calculate optimal number of data files (if ExpectedDatabaseSize is specified)
+    4. Validate sufficient disk space on data and log drives
+    5. Check if database already exists
+    6. Create database with specified files
+    7. Set database owner to 'sa'
+    8. Enable Query Store (SQL Server 2016+)
 
 .LINK
     https://github.com/karim-attaleb/sqlserver-databasescripts
@@ -120,6 +121,24 @@ try {
         $numberOfDataFiles = $config.Database.NumberOfDataFiles
         Write-Log -Message "Using configured number of data files: $numberOfDataFiles" -Level Info -LogFile $logFile
     }
+
+    # Validate sufficient disk space
+    Write-Log -Message "Validating disk space availability..." -Level Info -LogFile $logFile
+    $hasSufficientSpace = Test-DbaSufficientDiskSpace `
+        -SqlInstance $config.SqlInstance `
+        -DataDrive $config.Database.DataDrive `
+        -LogDrive $config.Database.LogDrive `
+        -NumberOfDataFiles $numberOfDataFiles `
+        -DataSize $config.FileSizes.DataSize `
+        -LogSize $config.FileSizes.LogSize `
+        -SafetyMarginPercent 10
+    
+    if (-not $hasSufficientSpace) {
+        $errorMsg = "Disk space validation failed. Please free up space on the drives or reduce database file sizes."
+        Write-Log -Message $errorMsg -Level Error -LogFile $logFile
+        throw $errorMsg
+    }
+    Write-Log -Message "Disk space validation passed - sufficient space available" -Level Success -LogFile $logFile
 
     # Check if database already exists
     $existingDb = Get-DbaDatabase -SqlInstance $config.SqlInstance -Database $config.Database.Name

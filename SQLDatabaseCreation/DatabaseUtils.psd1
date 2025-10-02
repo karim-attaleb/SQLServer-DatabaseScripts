@@ -13,7 +13,8 @@
         'Write-Log',
         'Initialize-Directories',
         'Enable-QueryStore',
-        'Calculate-OptimalDataFiles'
+        'Calculate-OptimalDataFiles',
+        'Test-DbaSufficientDiskSpace'
     )
     CmdletsToExport = @()
     VariablesToExport = @()

@@ -343,4 +343,156 @@ function Calculate-OptimalDataFiles {
     }
 }
 
-Export-ModuleMember -Function Convert-SizeToInt, Write-Log, Initialize-Directories, Enable-QueryStore, Calculate-OptimalDataFiles
+<#
+.SYNOPSIS
+    Validates that SQL Server host drives have sufficient disk space for database creation.
+
+.DESCRIPTION
+    Checks available disk space on specified drives using Get-DbaDiskSpace and compares
+    against required space for database files. Ensures adequate capacity exists before
+    attempting database creation to prevent out-of-space errors during operations.
+    
+    Required space is calculated as:
+    - Data drive: NumberOfDataFiles × DataSize
+    - Log drive: LogSize
+    - Safety margin: Additional percentage buffer (default 10%)
+
+.PARAMETER SqlInstance
+    The SQL Server instance name to check disk space on.
+
+.PARAMETER DataDrive
+    The drive letter (without colon) where data files will be stored.
+
+.PARAMETER LogDrive
+    The drive letter (without colon) where log files will be stored.
+
+.PARAMETER NumberOfDataFiles
+    The number of data files that will be created.
+
+.PARAMETER DataSize
+    The initial size of each data file as a string (e.g., "200MB", "1GB").
+
+.PARAMETER LogSize
+    The initial size of the log file as a string (e.g., "100MB", "500MB").
+
+.PARAMETER SafetyMarginPercent
+    The percentage of additional free space to require as a buffer. Default is 10.
+    For example, if required space is 1GB and safety margin is 10%, will require 1.1GB free.
+
+.EXAMPLE
+    Test-DbaSufficientDiskSpace -SqlInstance "localhost" -DataDrive "G" -LogDrive "L" -NumberOfDataFiles 4 -DataSize "200MB" -LogSize "100MB"
+    Checks if G: has at least 880MB free (4×200MB + 10%) and L: has at least 110MB free (100MB + 10%).
+
+.EXAMPLE
+    Test-DbaSufficientDiskSpace -SqlInstance "SERVER01" -DataDrive "D" -LogDrive "E" -NumberOfDataFiles 8 -DataSize "1GB" -LogSize "500MB" -SafetyMarginPercent 20
+    Checks with 20% safety margin instead of default 10%.
+
+.OUTPUTS
+    System.Boolean
+    Returns $true if both drives have sufficient space, $false otherwise.
+
+.NOTES
+    This function requires dbatools module and appropriate permissions to query disk space
+    on the target SQL Server host. Uses WMI/CIM to retrieve disk information.
+#>
+function Test-DbaSufficientDiskSpace {
+    [CmdletBinding()]
+    [OutputType([bool])]
+    param(
+        [Parameter(Mandatory = $true)]
+        [string]$SqlInstance,
+        
+        [Parameter(Mandatory = $true)]
+        [ValidatePattern('^[A-Z]$')]
+        [string]$DataDrive,
+        
+        [Parameter(Mandatory = $true)]
+        [ValidatePattern('^[A-Z]$')]
+        [string]$LogDrive,
+        
+        [Parameter(Mandatory = $true)]
+        [int]$NumberOfDataFiles,
+        
+        [Parameter(Mandatory = $true)]
+        [ValidatePattern('^\d+(MB|GB|TB)$')]
+        [string]$DataSize,
+        
+        [Parameter(Mandatory = $true)]
+        [ValidatePattern('^\d+(MB|GB|TB)$')]
+        [string]$LogSize,
+        
+        [Parameter(Mandatory = $false)]
+        [ValidateRange(0, 100)]
+        [int]$SafetyMarginPercent = 10
+    )
+
+    try {
+        Write-Verbose "Checking disk space on SQL Server host: $SqlInstance"
+        $diskInfo = Get-DbaDiskSpace -ComputerName $SqlInstance -ErrorAction Stop
+        
+        $dataSizeMB = Convert-SizeToInt -SizeString $DataSize
+        $logSizeMB = Convert-SizeToInt -SizeString $LogSize
+        
+        $requiredDataSpaceMB = $NumberOfDataFiles * $dataSizeMB
+        $requiredLogSpaceMB = $logSizeMB
+        
+        $safetyMultiplier = 1 + ($SafetyMarginPercent / 100.0)
+        $requiredDataSpaceWithMarginMB = [Math]::Ceiling($requiredDataSpaceMB * $safetyMultiplier)
+        $requiredLogSpaceWithMarginMB = [Math]::Ceiling($requiredLogSpaceMB * $safetyMultiplier)
+        
+        Write-Verbose "Required space: Data drive = ${requiredDataSpaceWithMarginMB}MB (${NumberOfDataFiles} files × ${dataSizeMB}MB + ${SafetyMarginPercent}% margin)"
+        Write-Verbose "Required space: Log drive = ${requiredLogSpaceWithMarginMB}MB (${logSizeMB}MB + ${SafetyMarginPercent}% margin)"
+        
+        $dataDriveName = "${DataDrive}:"
+        $dataDiskInfo = $diskInfo | Where-Object { $_.Name -eq $dataDriveName }
+        
+        if (-not $dataDiskInfo) {
+            Write-Error "Data drive ${dataDriveName} not found on SQL Server host"
+            return $false
+        }
+        
+        $dataAvailableMB = [Math]::Floor($dataDiskInfo.Free / 1MB)
+        Write-Verbose "Data drive ${dataDriveName} has ${dataAvailableMB}MB free"
+        
+        if ($dataAvailableMB -lt $requiredDataSpaceWithMarginMB) {
+            Write-Error "Insufficient space on data drive ${dataDriveName}: ${dataAvailableMB}MB available, ${requiredDataSpaceWithMarginMB}MB required (including ${SafetyMarginPercent}% safety margin)"
+            return $false
+        }
+        
+        if ($LogDrive -ne $DataDrive) {
+            $logDriveName = "${LogDrive}:"
+            $logDiskInfo = $diskInfo | Where-Object { $_.Name -eq $logDriveName }
+            
+            if (-not $logDiskInfo) {
+                Write-Error "Log drive ${logDriveName} not found on SQL Server host"
+                return $false
+            }
+            
+            $logAvailableMB = [Math]::Floor($logDiskInfo.Free / 1MB)
+            Write-Verbose "Log drive ${logDriveName} has ${logAvailableMB}MB free"
+            
+            if ($logAvailableMB -lt $requiredLogSpaceWithMarginMB) {
+                Write-Error "Insufficient space on log drive ${logDriveName}: ${logAvailableMB}MB available, ${requiredLogSpaceWithMarginMB}MB required (including ${SafetyMarginPercent}% safety margin)"
+                return $false
+            }
+        }
+        else {
+            $combinedRequiredMB = $requiredDataSpaceWithMarginMB + $requiredLogSpaceWithMarginMB
+            Write-Verbose "Combined requirement for drive ${dataDriveName}: ${combinedRequiredMB}MB"
+            
+            if ($dataAvailableMB -lt $combinedRequiredMB) {
+                Write-Error "Insufficient space on drive ${dataDriveName}: ${dataAvailableMB}MB available, ${combinedRequiredMB}MB required for both data and log (including ${SafetyMarginPercent}% safety margin)"
+                return $false
+            }
+        }
+        
+        Write-Verbose "Disk space validation passed: Sufficient space available on all drives"
+        return $true
+    }
+    catch {
+        Write-Error "Failed to check disk space: $($_.Exception.Message)"
+        throw
+    }
+}
+
+Export-ModuleMember -Function Convert-SizeToInt, Write-Log, Initialize-Directories, Enable-QueryStore, Calculate-OptimalDataFiles, Test-DbaSufficientDiskSpace

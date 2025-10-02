@@ -107,6 +107,31 @@ When you specify `ExpectedDatabaseSize` in the configuration, the script automat
 - Expected: 50GB, Threshold: 10GB → 5 files
 - Expected: 100GB, Threshold: 10GB → 8 files (capped at maximum)
 
+### Disk Space Validation
+
+Before creating a database, the script automatically validates that the target drives have sufficient free space to accommodate all database files plus a safety margin.
+
+**Validation Process:**
+1. Checks available space on both data and log drives using `Get-DbaDiskSpace` from dbatools
+2. Calculates required space: `(NumberOfDataFiles × DataSize) + LogSize`
+3. Adds 10% safety margin to ensure buffer space for growth
+4. Fails immediately if insufficient space is detected, preventing out-of-space errors during database operations
+
+**Space Calculation Example:**
+- Configuration: 4 data files × 200MB each + 100MB log file
+- Required space: (4 × 200MB) + 100MB = 900MB
+- With 10% margin: 900MB × 1.10 = 990MB required
+- Data drive must have at least 880MB free (800MB + 10%)
+- Log drive must have at least 110MB free (100MB + 10%)
+
+**Benefits:**
+- Prevents database creation failures due to insufficient disk space
+- Provides early warning before space-intensive operations
+- Ensures adequate buffer for auto-growth operations
+- Reduces risk of database corruption from unexpected out-of-space conditions
+
+If validation fails, the script will stop with a clear error message indicating which drive lacks space and how much is needed.
+
 ## Usage
 
 ### Basic Usage
