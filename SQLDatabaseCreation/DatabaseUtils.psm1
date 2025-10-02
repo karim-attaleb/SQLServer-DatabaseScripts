@@ -1,67 +1,346 @@
+<#
+.SYNOPSIS
+    Converts a size string to an integer value in megabytes.
+
+.DESCRIPTION
+    Parses a size string with units (MB, GB, TB) and converts it to an integer
+    value in megabytes for use with SQL Server file size parameters.
+
+.PARAMETER SizeString
+    A string representing a size value with units (e.g., "200MB", "10GB", "1TB").
+    Must match the pattern: digits followed by MB, GB, or TB.
+
+.EXAMPLE
+    Convert-SizeToInt -SizeString "200MB"
+    Returns: 200
+
+.EXAMPLE
+    Convert-SizeToInt -SizeString "10GB"
+    Returns: 10240
+
+.EXAMPLE
+    Convert-SizeToInt -SizeString "1TB"
+    Returns: 1048576
+
+.OUTPUTS
+    System.Int32
+    The size value in megabytes.
+
+.NOTES
+    This function is used internally to convert configuration size strings
+    into values that SQL Server commands can use.
+#>
 function Convert-SizeToInt {
-    param([string]$SizeString)
-    if ($SizeString -match '^(\d+)(MB|GB|TB)$') {
-        $size = [int]$matches[1]
-        $unit = $matches[2]
-        switch ($unit) {
-            'MB' { return $size }
-            'GB' { return $size * 1024 }
-            'TB' { return $size * 1024 * 1024 }
-            default { return $size }
-        }
-    }
-    return $SizeString
-}
-
-function Write-Log {
+    [CmdletBinding()]
+    [OutputType([int])]
     param(
-        $Message,
-        [ValidateSet("Info", "Warning", "Error", "Success")]$Level = "Info",
-        $LogFile
+        [Parameter(Mandatory = $true, ValueFromPipeline = $true)]
+        [ValidatePattern('^\d+(MB|GB|TB)$')]
+        [string]$SizeString
     )
-    $timestamp = Get-Date -Format "yyyy-MM-dd HH:mm:ss"
-    $logEntry = "[$timestamp] [$Level] $Message"
-    Write-Host $logEntry -ForegroundColor @{"Info"="White";"Warning"="Yellow";"Error"="Red";"Success"="Green"}[$Level]
-    Add-Content -Path $LogFile -Value $logEntry -Encoding UTF8
+
+    process {
+        if ($SizeString -match '^(\d+)(MB|GB|TB)$') {
+            $size = [int]$matches[1]
+            $unit = $matches[2]
+            
+            $result = switch ($unit) {
+                'MB' { $size }
+                'GB' { $size * 1024 }
+                'TB' { $size * 1024 * 1024 }
+                default { $size }
+            }
+            
+            Write-Verbose "Converted $SizeString to $result MB"
+            return $result
+        }
+        
+        Write-Warning "Invalid size string format: $SizeString. Returning as-is."
+        return $SizeString
+    }
 }
 
-function Initialize-Directories {
+<#
+.SYNOPSIS
+    Writes a log message to both console and log file.
+
+.DESCRIPTION
+    Writes a timestamped log message with a severity level to both the console
+    (with color coding) and a log file. Used for tracking script execution and
+    troubleshooting.
+
+.PARAMETER Message
+    The log message to write.
+
+.PARAMETER Level
+    The severity level of the message. Valid values: Info, Warning, Error, Success.
+    Default is Info.
+
+.PARAMETER LogFile
+    The path to the log file where the message will be appended.
+
+.EXAMPLE
+    Write-Log -Message "Database created successfully" -Level Success -LogFile "C:\Logs\db.log"
+    Writes a success message to console (in green) and to the log file.
+
+.EXAMPLE
+    Write-Log -Message "Connection established" -LogFile "C:\Logs\db.log"
+    Writes an info message to console (in white) and to the log file.
+
+.NOTES
+    Color coding:
+    - Info: White
+    - Warning: Yellow
+    - Error: Red
+    - Success: Green
+#>
+function Write-Log {
+    [CmdletBinding()]
     param(
-        $DataDrive,
-        $LogDrive,
-        $ServerInstanceName
+        [Parameter(Mandatory = $true)]
+        [string]$Message,
+        
+        [Parameter(Mandatory = $false)]
+        [ValidateSet("Info", "Warning", "Error", "Success")]
+        [string]$Level = "Info",
+        
+        [Parameter(Mandatory = $true)]
+        [string]$LogFile
+    )
+
+    try {
+        $timestamp = Get-Date -Format "yyyy-MM-dd HH:mm:ss"
+        $logEntry = "[$timestamp] [$Level] $Message"
+        
+        $colorMap = @{
+            "Info" = "White"
+            "Warning" = "Yellow"
+            "Error" = "Red"
+            "Success" = "Green"
+        }
+        
+        Write-Host $logEntry -ForegroundColor $colorMap[$Level]
+        Add-Content -Path $LogFile -Value $logEntry -Encoding UTF8 -ErrorAction Stop
+    }
+    catch {
+        Write-Warning "Failed to write to log file: $($_.Exception.Message)"
+    }
+}
+
+<#
+.SYNOPSIS
+    Initializes directory structure for SQL Server data and log files.
+
+.DESCRIPTION
+    Creates the necessary directory structure for SQL Server database files if they
+    don't already exist. Creates separate directories for data files and log files
+    based on the SQL Server instance name.
+
+.PARAMETER DataDrive
+    The drive letter (without colon) where data files will be stored.
+
+.PARAMETER LogDrive
+    The drive letter (without colon) where log files will be stored.
+
+.PARAMETER ServerInstanceName
+    The SQL Server instance name, used to create instance-specific subdirectories.
+
+.PARAMETER LogFile
+    The path to the log file for recording directory creation operations.
+
+.EXAMPLE
+    Initialize-Directories -DataDrive "G" -LogDrive "L" -ServerInstanceName "MSSQLSERVER" -LogFile "C:\Logs\db.log"
+    Creates G:\MSSQLSERVER\data and L:\MSSQLSERVER\log directories if they don't exist.
+
+.NOTES
+    This function is typically called automatically by the database creation script
+    to ensure proper directory structure exists before creating database files.
+#>
+function Initialize-Directories {
+    [CmdletBinding()]
+    param(
+        [Parameter(Mandatory = $true)]
+        [ValidatePattern('^[A-Z]$')]
+        [string]$DataDrive,
+        
+        [Parameter(Mandatory = $true)]
+        [ValidatePattern('^[A-Z]$')]
+        [string]$LogDrive,
+        
+        [Parameter(Mandatory = $true)]
+        [string]$ServerInstanceName,
+        
+        [Parameter(Mandatory = $true)]
+        [string]$LogFile
     )
 
     $paths = @(
-        "$DataDrive:\$ServerInstanceName\data",
-        "$LogDrive:\$ServerInstanceName\log"
+        "$DataDrive`:\$ServerInstanceName\data",
+        "$LogDrive`:\$ServerInstanceName\log"
     )
 
     foreach ($path in $paths) {
-        if (-not (Test-Path $path)) {
-            New-Item -ItemType Directory -Path $path -Force | Out-Null
-            Write-Log -Message "Created directory: $path" -Level Info -LogFile $LogFile
+        try {
+            if (-not (Test-Path -Path $path)) {
+                New-Item -ItemType Directory -Path $path -Force -ErrorAction Stop | Out-Null
+                Write-Log -Message "Created directory: $path" -Level Info -LogFile $LogFile
+                Write-Verbose "Successfully created directory: $path"
+            }
+            else {
+                Write-Verbose "Directory already exists: $path"
+            }
+        }
+        catch {
+            Write-Log -Message "Failed to create directory $path`: $($_.Exception.Message)" -Level Error -LogFile $LogFile
+            throw
         }
     }
 }
 
+<#
+.SYNOPSIS
+    Enables and configures Query Store for a SQL Server database.
+
+.DESCRIPTION
+    Enables Query Store on a SQL Server 2016+ database with optimized default settings.
+    Query Store captures query execution plans and runtime statistics for performance
+    analysis and troubleshooting.
+
+.PARAMETER SqlInstance
+    The SQL Server instance name where the database is located.
+
+.PARAMETER Database
+    The name of the database on which to enable Query Store.
+
+.EXAMPLE
+    Enable-QueryStore -SqlInstance "localhost" -Database "MyDatabase"
+    Enables Query Store on MyDatabase with default settings.
+
+.NOTES
+    Query Store Configuration:
+    - State: ReadWrite
+    - Stale Query Threshold: 31 days
+    - Capture Mode: Auto (captures relevant queries automatically)
+    - Max Size: 100 MB
+    - Flush Interval: 900 seconds (15 minutes)
+    - Cleanup Mode: Auto (automatically removes old data)
+    - Max Plans Per Query: 100
+
+    Requires SQL Server 2016 or later.
+    Requires dbatools module.
+#>
 function Enable-QueryStore {
+    [CmdletBinding()]
     param(
-        $SqlInstance,
-        $Database
+        [Parameter(Mandatory = $true)]
+        [string]$SqlInstance,
+        
+        [Parameter(Mandatory = $true)]
+        [string]$Database
     )
 
-    $queryStoreConfig = @{
-        SqlInstance = $SqlInstance
-        Database = $Database
-        State = 'ReadWrite'
-        StaleQueryThreshold = [timespan]::FromDays(31).Days
-        CaptureMode = 'Auto'
-        MaxSize = 100
-        FlushInterval = [timespan]::FromSeconds(900).TotalSeconds
-        CleanupMode = 'Auto'
-        MaxPlansPerQuery = 100
-    }
+    try {
+        $queryStoreConfig = @{
+            SqlInstance = $SqlInstance
+            Database = $Database
+            State = 'ReadWrite'
+            StaleQueryThreshold = [timespan]::FromDays(31).Days
+            CaptureMode = 'Auto'
+            MaxSize = 100
+            FlushInterval = [timespan]::FromSeconds(900).TotalSeconds
+            CleanupMode = 'Auto'
+            MaxPlansPerQuery = 100
+        }
 
-    Set-DbaDbQueryStoreOption @queryStoreConfig
+        Write-Verbose "Enabling Query Store for database: $Database"
+        Set-DbaDbQueryStoreOption @queryStoreConfig -ErrorAction Stop
+        Write-Verbose "Query Store enabled successfully"
+    }
+    catch {
+        Write-Warning "Failed to enable Query Store: $($_.Exception.Message)"
+        throw
+    }
 }
+
+<#
+.SYNOPSIS
+    Calculates the optimal number of data files based on expected database size and threshold.
+
+.DESCRIPTION
+    Determines the optimal number of data files to create for a database by dividing
+    the expected database size by the file size threshold. The result is capped at a
+    maximum of 8 files (SQL Server best practice for proportional fill algorithm
+    efficiency) and has a minimum of 1 file.
+
+.PARAMETER ExpectedDatabaseSize
+    The expected total size of the database as a string with units (e.g., "50GB", "500MB", "1TB").
+    Must match the pattern: digits followed by MB, GB, or TB.
+
+.PARAMETER FileSizeThreshold
+    The maximum desired size for each data file as a string with units (e.g., "10GB").
+    Must match the pattern: digits followed by MB, GB, or TB.
+
+.EXAMPLE
+    Calculate-OptimalDataFiles -ExpectedDatabaseSize "50GB" -FileSizeThreshold "10GB"
+    Returns: 5
+    Calculates that 5 files are needed to keep each file at or below 10GB.
+
+.EXAMPLE
+    Calculate-OptimalDataFiles -ExpectedDatabaseSize "5GB" -FileSizeThreshold "10GB"
+    Returns: 1
+    Database size is below threshold, so only 1 file is needed.
+
+.EXAMPLE
+    Calculate-OptimalDataFiles -ExpectedDatabaseSize "100GB" -FileSizeThreshold "10GB"
+    Returns: 8
+    Would calculate 10 files, but is capped at 8 files (SQL Server best practice).
+
+.OUTPUTS
+    System.Int32
+    The optimal number of data files to create (between 1 and 8).
+
+.NOTES
+    SQL Server uses a proportional fill algorithm across multiple data files in a filegroup.
+    While you can have more than 8 files, performance benefits diminish and management
+    complexity increases beyond 8 files for most workloads.
+
+    Formula: NumberOfFiles = Ceiling(ExpectedDatabaseSize / FileSizeThreshold)
+    Constraints: Min = 1, Max = 8
+#>
+function Calculate-OptimalDataFiles {
+    [CmdletBinding()]
+    [OutputType([int])]
+    param(
+        [Parameter(Mandatory = $true)]
+        [ValidatePattern('^\d+(MB|GB|TB)$')]
+        [string]$ExpectedDatabaseSize,
+        
+        [Parameter(Mandatory = $true)]
+        [ValidatePattern('^\d+(MB|GB|TB)$')]
+        [string]$FileSizeThreshold
+    )
+
+    try {
+        $expectedSizeMB = Convert-SizeToInt -SizeString $ExpectedDatabaseSize
+        $thresholdMB = Convert-SizeToInt -SizeString $FileSizeThreshold
+        
+        if ($thresholdMB -le 0) {
+            throw "FileSizeThreshold must be greater than 0"
+        }
+        
+        $calculatedFiles = [Math]::Ceiling($expectedSizeMB / $thresholdMB)
+        
+        $optimalFiles = [Math]::Max(1, [Math]::Min(8, $calculatedFiles))
+        
+        Write-Verbose "Expected size: $expectedSizeMB MB, Threshold: $thresholdMB MB"
+        Write-Verbose "Calculated files: $calculatedFiles, Optimal files (capped 1-8): $optimalFiles"
+        
+        return $optimalFiles
+    }
+    catch {
+        Write-Error "Failed to calculate optimal data files: $($_.Exception.Message)"
+        throw
+    }
+}
+
+Export-ModuleMember -Function Convert-SizeToInt, Write-Log, Initialize-Directories, Enable-QueryStore, Calculate-OptimalDataFiles

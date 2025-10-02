@@ -1,23 +1,96 @@
 <#
 .SYNOPSIS
-    Creates and configures SQL Server database using configuration file
+    Creates and configures SQL Server database using configuration file.
+
+.DESCRIPTION
+    This script automates the creation of SQL Server databases with:
+    - Automatic calculation of optimal number of data files based on expected size
+    - Multi-file support with configurable sizes and growth settings
+    - Multi-drive support for data and log files
+    - Query Store enablement for SQL Server 2016+
+    - Comprehensive logging and error handling
+
+.PARAMETER ConfigPath
+    The path to the PowerShell data file (.psd1) containing the database configuration.
+    The configuration file should define SqlInstance, Database settings, FileSizes, and LogFile.
+
+.EXAMPLE
+    .\Invoke-DatabaseCreation.ps1 -ConfigPath .\DatabaseConfig.psd1
+    Creates a database using the settings in DatabaseConfig.psd1.
+
+.EXAMPLE
+    .\Invoke-DatabaseCreation.ps1 -ConfigPath .\DatabaseConfig.psd1 -WhatIf
+    Shows what would happen without actually creating the database.
+
+.EXAMPLE
+    .\Invoke-DatabaseCreation.ps1 -ConfigPath .\DatabaseConfig.psd1 -Verbose
+    Creates a database with verbose output showing detailed progress.
+
+.NOTES
+    Requirements:
+    - PowerShell 5.1 or higher
+    - dbatools module
+    - Appropriate SQL Server permissions
+
+    The script will:
+    1. Validate SQL Server connection
+    2. Create necessary directories
+    3. Check if database already exists
+    4. Calculate optimal number of data files (if ExpectedDatabaseSize is specified)
+    5. Create database with specified files
+    6. Set database owner to 'sa'
+    7. Enable Query Store (SQL Server 2016+)
+
+.LINK
+    https://github.com/karim-attaleb/sqlserver-databasescripts
 #>
 [CmdletBinding(SupportsShouldProcess = $true)]
 param(
-    [Parameter(Mandatory = $true)]
+    [Parameter(Mandatory = $true, HelpMessage = "Path to the database configuration file (.psd1)")]
+    [ValidateScript({
+        if (-not (Test-Path $_)) {
+            throw "Configuration file not found: $_"
+        }
+        if ($_ -notmatch '\.psd1$') {
+            throw "Configuration file must be a PowerShell data file (.psd1)"
+        }
+        return $true
+    })]
     [string]$ConfigPath
 )
 
 # Import required modules
-if (-not (Get-Module -Name dbatools -ListAvailable)) {
-    Install-Module -Name dbatools -Force -AllowClobber -Scope CurrentUser -SkipPublisherCheck
+try {
+    if (-not (Get-Module -Name dbatools -ListAvailable)) {
+        Write-Host "Installing dbatools module..." -ForegroundColor Yellow
+        Install-Module -Name dbatools -Force -AllowClobber -Scope CurrentUser -SkipPublisherCheck
+    }
+    Import-Module dbatools -ErrorAction Stop
+    
+    $modulePath = Join-Path $PSScriptRoot "DatabaseUtils.psm1"
+    if (-not (Test-Path $modulePath)) {
+        throw "DatabaseUtils module not found at: $modulePath"
+    }
+    Import-Module $modulePath -ErrorAction Stop -Force
+    
+    Write-Verbose "All required modules loaded successfully"
 }
-Import-Module dbatools -ErrorAction Stop
-Import-Module .\DatabaseUtils.psm1 -ErrorAction Stop
+catch {
+    Write-Error "Failed to import required modules: $($_.Exception.Message)"
+    exit 1
+}
 
 # Load configuration
-$config = Import-PowerShellDataFile -Path $ConfigPath
-$logFile = $config.LogFile
+try {
+    $config = Import-PowerShellDataFile -Path $ConfigPath -ErrorAction Stop
+    $logFile = $config.LogFile
+    
+    Write-Verbose "Configuration loaded from: $ConfigPath"
+}
+catch {
+    Write-Error "Failed to load configuration file: $($_.Exception.Message)"
+    exit 1
+}
 
 try {
     Write-Log -Message "Starting database creation process" -Level Info -LogFile $logFile
@@ -35,6 +108,18 @@ try {
                           -LogDrive $config.Database.LogDrive `
                           -ServerInstanceName $server.InstanceName `
                           -LogFile $logFile
+
+    # Determine number of data files
+    if ($config.Database.ExpectedDatabaseSize) {
+        $numberOfDataFiles = Calculate-OptimalDataFiles `
+            -ExpectedDatabaseSize $config.Database.ExpectedDatabaseSize `
+            -FileSizeThreshold $config.FileSizes.FileSizeThreshold
+        Write-Log -Message "Calculated optimal number of data files: $numberOfDataFiles (based on expected size: $($config.Database.ExpectedDatabaseSize), threshold: $($config.FileSizes.FileSizeThreshold))" -Level Info -LogFile $logFile
+    }
+    else {
+        $numberOfDataFiles = $config.Database.NumberOfDataFiles
+        Write-Log -Message "Using configured number of data files: $numberOfDataFiles" -Level Info -LogFile $logFile
+    }
 
     # Check if database already exists
     $existingDb = Get-DbaDatabase -SqlInstance $config.SqlInstance -Database $config.Database.Name
@@ -57,25 +142,36 @@ try {
             LogSize = (Convert-SizeToInt $config.FileSizes.LogSize)
             PrimaryFileGrowth = (Convert-SizeToInt $config.FileSizes.DataGrowth)
             LogGrowth = (Convert-SizeToInt $config.FileSizes.LogGrowth)
-            SecondaryFileCount = [Math]::Max(0, $config.Database.NumberOfDataFiles - 1)
+            SecondaryFileCount = [Math]::Max(0, $numberOfDataFiles - 1)
             SecondaryFileGrowth = (Convert-SizeToInt $config.FileSizes.DataGrowth)
         }
 
         try {
-            $newDb = New-DbaDatabase @newDbParams
-            Write-Log -Message "Successfully created database: $($config.Database.Name)" -Level Success -LogFile $logFile
+            $newDb = New-DbaDatabase @newDbParams -ErrorAction Stop
+            Write-Log -Message "Successfully created database: $($config.Database.Name) with $numberOfDataFiles data file(s)" -Level Success -LogFile $logFile
 
             # Set database owner
-            $db = Get-DbaDatabase -SqlInstance $config.SqlInstance -Database $config.Database.Name
+            $db = Get-DbaDatabase -SqlInstance $config.SqlInstance -Database $config.Database.Name -ErrorAction Stop
             if ($db.Owner -ne 'sa') {
-                Set-DbaDbOwner -SqlInstance $config.SqlInstance -Database $config.Database.Name -TargetLogin 'sa'
+                Set-DbaDbOwner -SqlInstance $config.SqlInstance -Database $config.Database.Name -TargetLogin 'sa' -ErrorAction Stop
                 Write-Log -Message "Changed database owner to SA" -Level Success -LogFile $logFile
+            }
+            else {
+                Write-Log -Message "Database owner is already SA" -Level Info -LogFile $logFile
             }
 
             # Enable Query Store if SQL 2016+
             if ($server.VersionMajor -ge 13) {
-                Enable-QueryStore -SqlInstance $config.SqlInstance -Database $config.Database.Name
-                Write-Log -Message "Enabled Query Store for database" -Level Success -LogFile $logFile
+                try {
+                    Enable-QueryStore -SqlInstance $config.SqlInstance -Database $config.Database.Name
+                    Write-Log -Message "Enabled Query Store for database" -Level Success -LogFile $logFile
+                }
+                catch {
+                    Write-Log -Message "Warning: Failed to enable Query Store: $($_.Exception.Message)" -Level Warning -LogFile $logFile
+                }
+            }
+            else {
+                Write-Log -Message "Query Store not available on SQL Server version $($server.VersionMajor) (requires version 13+)" -Level Info -LogFile $logFile
             }
         }
         catch {
