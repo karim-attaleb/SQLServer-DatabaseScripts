@@ -32,5 +32,5 @@
     }
 
     # Logging
-    LogFile = "DatabaseCreation_$(Get-Date -Format 'yyyyMMdd_HHmmss').log"
+    LogFile = "DatabaseCreation.log"
 }

@@ -149,19 +149,20 @@ try {
 
     # Create database
     if ($PSCmdlet.ShouldProcess("$($config.Database.Name)", "Create database")) {
-        $primaryDataPath = "$($config.Database.DataDrive):\$($server.InstanceName)\data\$($config.Database.Name).mdf"
-        $logPath = "$($config.Database.LogDrive):\$($server.InstanceName)\log\$($config.Database.Name)_log.ldf"
+        $dataDirectory = "$($config.Database.DataDrive):\$($server.InstanceName)\data"
+        $logDirectory = "$($config.Database.LogDrive):\$($server.InstanceName)\log"
 
         $newDbParams = @{
             SqlInstance = $config.SqlInstance
             Name = $config.Database.Name
-            DataFilePath = $primaryDataPath
-            LogFilePath = $logPath
+            DataFilePath = $dataDirectory
+            LogFilePath = $logDirectory
             PrimaryFileSize = (Convert-SizeToInt $config.FileSizes.DataSize)
             LogSize = (Convert-SizeToInt $config.FileSizes.LogSize)
             PrimaryFileGrowth = (Convert-SizeToInt $config.FileSizes.DataGrowth)
             LogGrowth = (Convert-SizeToInt $config.FileSizes.LogGrowth)
             SecondaryFileCount = [Math]::Max(0, $numberOfDataFiles - 1)
+            SecondaryFilesize = (Convert-SizeToInt $config.FileSizes.DataSize)
             SecondaryFileGrowth = (Convert-SizeToInt $config.FileSizes.DataGrowth)
         }
 
