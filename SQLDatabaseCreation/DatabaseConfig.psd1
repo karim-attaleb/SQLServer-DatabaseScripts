@@ -8,15 +8,12 @@
         DataDrive = "G"
         LogDrive = "L"
         
-        # Optional: Specify expected total database size to automatically calculate
+        # Expected total database size used to automatically calculate
         # the optimal number of data files based on FileSizeThreshold.
-        # If not provided, NumberOfDataFiles below will be used.
+        # If size > threshold, multiple files will be created.
+        # Otherwise, a single file will be used.
         # Examples: "50GB", "500MB", "1TB"
-        ExpectedDatabaseSize = $null
-        
-        # Number of data files to create.
-        # This value is used only when ExpectedDatabaseSize is not specified.
-        NumberOfDataFiles = 4
+        ExpectedDatabaseSize = "5GB"
     }
 
     # File Configuration

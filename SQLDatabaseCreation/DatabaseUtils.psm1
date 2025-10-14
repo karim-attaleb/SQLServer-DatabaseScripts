@@ -310,10 +310,9 @@ function Enable-QueryStore {
     Calculates the optimal number of data files based on expected database size and threshold.
 
 .DESCRIPTION
-    Determines the optimal number of data files to create for a database by dividing
-    the expected database size by the file size threshold. The result is capped at a
-    maximum of 8 files (SQL Server best practice for proportional fill algorithm
-    efficiency) and has a minimum of 1 file.
+    Determines the optimal number of data files to create for a database. If the expected
+    database size exceeds the file size threshold, it calculates the number of files needed
+    by dividing the expected size by the threshold. Otherwise, returns 1 file.
 
 .PARAMETER ExpectedDatabaseSize
     The expected total size of the database as a string with units (e.g., "50GB", "500MB", "1TB").
@@ -326,7 +325,7 @@ function Enable-QueryStore {
 .EXAMPLE
     Calculate-OptimalDataFiles -ExpectedDatabaseSize "50GB" -FileSizeThreshold "10GB"
     Returns: 5
-    Calculates that 5 files are needed to keep each file at or below 10GB.
+    Calculates that 5 files are needed (50GB / 10GB = 5).
 
 .EXAMPLE
     Calculate-OptimalDataFiles -ExpectedDatabaseSize "5GB" -FileSizeThreshold "10GB"
@@ -334,21 +333,18 @@ function Enable-QueryStore {
     Database size is below threshold, so only 1 file is needed.
 
 .EXAMPLE
-    Calculate-OptimalDataFiles -ExpectedDatabaseSize "100GB" -FileSizeThreshold "10GB"
-    Returns: 8
-    Would calculate 10 files, but is capped at 8 files (SQL Server best practice).
+    Calculate-OptimalDataFiles -ExpectedDatabaseSize "25GB" -FileSizeThreshold "10GB"
+    Returns: 3
+    Calculates 3 files needed (ceiling(25GB / 10GB) = 3).
 
 .OUTPUTS
     System.Int32
-    The optimal number of data files to create (between 1 and 8).
+    The optimal number of data files to create (minimum 1).
 
 .NOTES
-    SQL Server uses a proportional fill algorithm across multiple data files in a filegroup.
-    While you can have more than 8 files, performance benefits diminish and management
-    complexity increases beyond 8 files for most workloads.
-
-    Formula: NumberOfFiles = Ceiling(ExpectedDatabaseSize / FileSizeThreshold)
-    Constraints: Min = 1, Max = 8
+    Formula: 
+    - If ExpectedDatabaseSize > FileSizeThreshold: Ceiling(ExpectedDatabaseSize / FileSizeThreshold)
+    - Otherwise: 1
 #>
 function Calculate-OptimalDataFiles {
     [CmdletBinding()]
@@ -371,12 +367,14 @@ function Calculate-OptimalDataFiles {
             throw "FileSizeThreshold must be greater than 0"
         }
         
-        $calculatedFiles = [Math]::Ceiling($expectedSizeMB / $thresholdMB)
-        
-        $optimalFiles = [Math]::Max(1, [Math]::Min(8, $calculatedFiles))
-        
-        Write-Verbose "Expected size: $expectedSizeMB MB, Threshold: $thresholdMB MB"
-        Write-Verbose "Calculated files: $calculatedFiles, Optimal files (capped 1-8): $optimalFiles"
+        if ($expectedSizeMB -gt $thresholdMB) {
+            $optimalFiles = [Math]::Ceiling($expectedSizeMB / $thresholdMB)
+            Write-Verbose "Expected size ($expectedSizeMB MB) exceeds threshold ($thresholdMB MB): calculating $optimalFiles files"
+        }
+        else {
+            $optimalFiles = 1
+            Write-Verbose "Expected size ($expectedSizeMB MB) is within threshold ($thresholdMB MB): using 1 file"
+        }
         
         return $optimalFiles
     }
@@ -500,7 +498,7 @@ function Test-DbaSufficientDiskSpace {
         }
         
         $dataAvailableMB = [Math]::Floor($dataDiskInfo.Free / 1MB)
-        $dataTotalMB = [Math]::Floor($dataDiskInfo.Size / 1MB)
+        $dataTotalMB = [Math]::Floor($dataDiskInfo.Capacity / 1MB)
         $dataUsedMB = $dataTotalMB - $dataAvailableMB
         $dataUsedPercent = [Math]::Round(($dataUsedMB / $dataTotalMB) * 100, 2)
         
@@ -522,7 +520,7 @@ function Test-DbaSufficientDiskSpace {
             }
             
             $logAvailableMB = [Math]::Floor($logDiskInfo.Free / 1MB)
-            $logTotalMB = [Math]::Floor($logDiskInfo.Size / 1MB)
+            $logTotalMB = [Math]::Floor($logDiskInfo.Capacity / 1MB)
             $logUsedMB = $logTotalMB - $logAvailableMB
             $logUsedPercent = [Math]::Round(($logUsedMB / $logTotalMB) * 100, 2)
             

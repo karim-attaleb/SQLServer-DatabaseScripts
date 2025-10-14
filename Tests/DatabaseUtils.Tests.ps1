@@ -93,16 +93,16 @@ Describe "Calculate-OptimalDataFiles" {
     }
     
     Context "When calculation exceeds maximum" {
-        It "Should cap at 8 files when size is 100GB and threshold is 10GB" {
-            Calculate-OptimalDataFiles -ExpectedDatabaseSize "100GB" -FileSizeThreshold "10GB" | Should -Be 8
+        It "Should return 10 files when size is 100GB and threshold is 10GB" {
+            Calculate-OptimalDataFiles -ExpectedDatabaseSize "100GB" -FileSizeThreshold "10GB" | Should -Be 10
         }
         
-        It "Should cap at 8 files when size is 1TB and threshold is 10GB" {
-            Calculate-OptimalDataFiles -ExpectedDatabaseSize "1TB" -FileSizeThreshold "10GB" | Should -Be 8
+        It "Should return 103 files when size is 1TB and threshold is 10GB" {
+            Calculate-OptimalDataFiles -ExpectedDatabaseSize "1TB" -FileSizeThreshold "10GB" | Should -Be 103
         }
         
-        It "Should cap at 8 files when size is 200GB and threshold is 10GB" {
-            Calculate-OptimalDataFiles -ExpectedDatabaseSize "200GB" -FileSizeThreshold "10GB" | Should -Be 8
+        It "Should return 20 files when size is 200GB and threshold is 10GB" {
+            Calculate-OptimalDataFiles -ExpectedDatabaseSize "200GB" -FileSizeThreshold "10GB" | Should -Be 20
         }
     }
     
@@ -184,14 +184,14 @@ Describe "Test-DbaSufficientDiskSpace" {
             Mock Get-DbaDiskSpace {
                 return @(
                     [PSCustomObject]@{
-                        Name = "G:"
+                        Name = "G:\\"
                         Free = 50GB
-                        Size = 100GB
+                        Capacity = 100GB
                     },
                     [PSCustomObject]@{
-                        Name = "L:"
+                        Name = "L:\\"
                         Free = 20GB
-                        Size = 50GB
+                        Capacity = 50GB
                     }
                 )
             }
@@ -211,14 +211,14 @@ Describe "Test-DbaSufficientDiskSpace" {
             Mock Get-DbaDiskSpace {
                 return @(
                     [PSCustomObject]@{
-                        Name = "G:"
+                        Name = "G:\\"
                         Free = 500MB
-                        Size = 100GB
+                        Capacity = 100GB
                     },
                     [PSCustomObject]@{
-                        Name = "L:"
+                        Name = "L:\\"
                         Free = 50MB
-                        Size = 50GB
+                        Capacity = 50GB
                     }
                 )
             }
@@ -232,14 +232,14 @@ Describe "Test-DbaSufficientDiskSpace" {
             Mock Get-DbaDiskSpace {
                 return @(
                     [PSCustomObject]@{
-                        Name = "G:"
+                        Name = "G:\\"
                         Free = 50GB
-                        Size = 100GB
+                        Capacity = 100GB
                     },
                     [PSCustomObject]@{
-                        Name = "L:"
+                        Name = "L:\\"
                         Free = 50MB
-                        Size = 50GB
+                        Capacity = 50GB
                     }
                 )
             }
@@ -252,9 +252,9 @@ Describe "Test-DbaSufficientDiskSpace" {
             Mock Get-DbaDiskSpace {
                 return @(
                     [PSCustomObject]@{
-                        Name = "G:"
+                        Name = "G:\\"
                         Free = 2GB
-                        Size = 100GB
+                        Capacity = 100GB
                     }
                 )
             }
@@ -268,9 +268,9 @@ Describe "Test-DbaSufficientDiskSpace" {
             Mock Get-DbaDiskSpace {
                 return @(
                     [PSCustomObject]@{
-                        Name = "G:"
+                        Name = "G:\\"
                         Free = 800MB
-                        Size = 100GB
+                        Capacity = 100GB
                     }
                 )
             }
@@ -283,9 +283,9 @@ Describe "Test-DbaSufficientDiskSpace" {
             Mock Get-DbaDiskSpace {
                 return @(
                     [PSCustomObject]@{
-                        Name = "C:"
+                        Name = "C:\\"
                         Free = 50GB
-                        Size = 100GB
+                        Capacity = 100GB
                     }
                 )
             }

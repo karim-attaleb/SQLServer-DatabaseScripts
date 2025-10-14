@@ -270,12 +270,12 @@ def create_overview_presentation():
     slide = create_content_slide(prs, "✨ Key Features")
     add_features_diagram(slide)
     
-    slide = create_content_slide(prs, "🔢 Automatic File Count Calculation")
+    slide = create_content_slide(prs, "🔢 Simplified File Count Logic")
     add_bullet_points(slide, Inches(1), Inches(2), Inches(8), Inches(2), [
-        "📐 Formula: NumberOfFiles = Ceiling(ExpectedDatabaseSize / FileSizeThreshold)",
-        "📊 Example: 50GB database ÷ 10GB threshold = 5 data files",
-        "🎯 Automatic capping at 8 files (SQL Server best practice)",
-        "⚖️ Prevents single file from becoming too large"
+        "📐 Logic: If ExpectedSize > Threshold → Calculate files, else → 1 file",
+        "📊 Formula: Ceiling(ExpectedDatabaseSize / FileSizeThreshold)",
+        "📈 Example 1: 5GB database ÷ 10GB threshold = 1 file",
+        "📈 Example 2: 50GB database ÷ 10GB threshold = 5 files"
     ])
     
     box = slide.shapes.add_shape(
@@ -511,8 +511,7 @@ def create_technical_presentation():
 Database.Name: Database name to create
 Database.DataDrive: Drive letter for data files (e.g., "G")
 Database.LogDrive: Drive letter for log files (e.g., "L")
-Database.ExpectedDatabaseSize: Optional - for auto file calculation
-Database.NumberOfDataFiles: Used when ExpectedDatabaseSize is null
+Database.ExpectedDatabaseSize: Expected size - determines file count
 FileSizes.DataSize: Initial size per data file (e.g., "200MB")
 FileSizes.DataGrowth: Auto-growth increment for data files
 FileSizes.LogSize: Initial transaction log size
@@ -566,7 +565,7 @@ LogFile: Path to log file for operation logging"""
     box2.line.width = Pt(2)
     
     tf = box2.text_frame
-    tf.text = "numberOfFiles = Ceiling(ExpectedDatabaseSize / FileSizeThreshold)\nResult = Min(numberOfFiles, 8)"
+    tf.text = "if (ExpectedSize > Threshold)\n  numberOfFiles = Ceiling(ExpectedSize / Threshold)\nelse\n  numberOfFiles = 1"
     tf.paragraphs[0].alignment = PP_ALIGN.CENTER
     tf.paragraphs[0].font.size = Pt(18)
     tf.paragraphs[0].font.name = "Courier New"
@@ -574,9 +573,9 @@ LogFile: Path to log file for operation logging"""
     tf.vertical_anchor = 1
     
     add_bullet_points(slide, Inches(1.5), Inches(5), Inches(7), Inches(1.5), [
-        "Example 1: 5GB / 10GB = 0.5 → Ceiling = 1 → Min(1, 8) = 1 file",
-        "Example 2: 50GB / 10GB = 5 → Ceiling = 5 → Min(5, 8) = 5 files",
-        "Example 3: 100GB / 10GB = 10 → Ceiling = 10 → Min(10, 8) = 8 files"
+        "Example 1: 5GB / 10GB → 5GB ≤ 10GB → 1 file",
+        "Example 2: 50GB / 10GB → 50GB > 10GB → Ceiling(5) = 5 files",
+        "Example 3: 100GB / 10GB → 100GB > 10GB → Ceiling(10) = 10 files"
     ])
     
     slide = create_content_slide(prs, "💾 Disk Space Validation Logic")
@@ -600,13 +599,14 @@ LogFile: Path to log file for operation logging"""
     tf.vertical_anchor = 1
     
     add_bullet_points(slide, Inches(1), Inches(3.5), Inches(8), Inches(3), [
-        "1. Calculate data space: NumberOfDataFiles × DataSize",
-        "2. Add safety margin: RequiredSpace × 1.10 (10% buffer)",
-        "3. Check data drive: AvailableSpace ≥ RequiredSpace + Margin",
-        "4. Calculate log space: LogSize × 1.10",
-        "5. Check log drive: AvailableSpace ≥ LogSize + Margin",
-        "6. If same drive: Check combined requirement",
-        "7. Fail early with clear error if insufficient space"
+        "1. Calculate file count from ExpectedDatabaseSize",
+        "2. Calculate data space: FileCount × DataSize",
+        "3. Add safety margin: RequiredSpace × 1.10 (10% buffer)",
+        "4. Check data drive: AvailableSpace ≥ RequiredSpace + Margin",
+        "5. Calculate log space: LogSize × 1.10",
+        "6. Check log drive: AvailableSpace ≥ LogSize + Margin",
+        "7. If same drive: Check combined requirement",
+        "8. Fail early with clear error if insufficient space"
     ])
     
     slide = create_content_slide(prs, "🧪 Testing Coverage")
@@ -774,8 +774,7 @@ def create_user_guide_presentation():
         Name = "MyDatabase"
         DataDrive = "G"
         LogDrive = "L"
-        ExpectedDatabaseSize = "50GB"  # Auto calculates files
-        NumberOfDataFiles = 4           # Used if ExpectedDatabaseSize is null
+        ExpectedDatabaseSize = "50GB"  # Results in 5 files (50GB / 10GB)
     }
     FileSizes = @{
         DataSize = "200MB"
