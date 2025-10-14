@@ -440,48 +440,48 @@ function Test-DbaSufficientDiskSpace {
         $requiredDataSpaceWithMarginMB = [Math]::Ceiling($requiredDataSpaceMB * $safetyMultiplier)
         $requiredLogSpaceWithMarginMB = [Math]::Ceiling($requiredLogSpaceMB * $safetyMultiplier)
         
-        Write-Verbose "Required space: Data drive = $(requiredDataSpaceWithMarginMB)MB ($(NumberOfDataFiles) files × $(dataSizeMB)MB + $(SafetyMarginPercent)% margin)"
-        Write-Verbose "Required space: Log drive = $(requiredLogSpaceWithMarginMB)MB ($(logSizeMB)MB + $(SafetyMarginPercent)% margin)"
+        Write-Verbose "Required space: Data drive = ${requiredDataSpaceWithMarginMB}MB (${NumberOfDataFiles} files × ${dataSizeMB}MB + ${SafetyMarginPercent}% margin)"
+        Write-Verbose "Required space: Log drive = ${requiredLogSpaceWithMarginMB}MB (${logSizeMB}MB + ${SafetyMarginPercent}% margin)"
         
-        $dataDriveName = "$(DataDrive):"
+        $dataDriveName = "${DataDrive}:"
         $dataDiskInfo = $diskInfo | Where-Object { $_.Name -eq $dataDriveName }
         
         if (-not $dataDiskInfo) {
-            Write-Error "Data drive $(dataDriveName) not found on SQL Server host"
+            Write-Error "Data drive ${dataDriveName} not found on SQL Server host"
             return $false
         }
         
         $dataAvailableMB = [Math]::Floor($dataDiskInfo.Free / 1MB)
-        Write-Verbose "Data drive $(dataDriveName) has $(dataAvailableMB)MB free"
+        Write-Verbose "Data drive ${dataDriveName} has ${dataAvailableMB}MB free"
         
         if ($dataAvailableMB -lt $requiredDataSpaceWithMarginMB) {
-            Write-Error "Insufficient space on data drive $(dataDriveName): $(dataAvailableMB)MB available, $(requiredDataSpaceWithMarginMB)MB required (including $(SafetyMarginPercent)% safety margin)"
+            Write-Error "Insufficient space on data drive ${dataDriveName}: ${dataAvailableMB}MB available, ${requiredDataSpaceWithMarginMB}MB required (including ${SafetyMarginPercent}% safety margin)"
             return $false
         }
         
         if ($LogDrive -ne $DataDrive) {
-            $logDriveName = "$(LogDrive):"
+            $logDriveName = "${LogDrive}:"
             $logDiskInfo = $diskInfo | Where-Object { $_.Name -eq $logDriveName }
             
             if (-not $logDiskInfo) {
-                Write-Error "Log drive $(logDriveName) not found on SQL Server host"
+                Write-Error "Log drive ${logDriveName} not found on SQL Server host"
                 return $false
             }
             
             $logAvailableMB = [Math]::Floor($logDiskInfo.Free / 1MB)
-            Write-Verbose "Log drive $(logDriveName) has $(logAvailableMB)MB free"
+            Write-Verbose "Log drive ${logDriveName} has ${logAvailableMB}MB free"
             
             if ($logAvailableMB -lt $requiredLogSpaceWithMarginMB) {
-                Write-Error "Insufficient space on log drive $(logDriveName): $(logAvailableMB)MB available, $(requiredLogSpaceWithMarginMB)MB required (including $(SafetyMarginPercent)% safety margin)"
+                Write-Error "Insufficient space on log drive ${logDriveName}: ${logAvailableMB}MB available, ${requiredLogSpaceWithMarginMB}MB required (including ${SafetyMarginPercent}% safety margin)"
                 return $false
             }
         }
         else {
             $combinedRequiredMB = $requiredDataSpaceWithMarginMB + $requiredLogSpaceWithMarginMB
-            Write-Verbose "Combined requirement for drive $(dataDriveName): $(combinedRequiredMB)MB"
+            Write-Verbose "Combined requirement for drive ${dataDriveName}: ${combinedRequiredMB}MB"
             
             if ($dataAvailableMB -lt $combinedRequiredMB) {
-                Write-Error "Insufficient space on drive $(dataDriveName): $(dataAvailableMB)MB available, $(combinedRequiredMB)MB required for both data and log (including $(SafetyMarginPercent)% safety margin)"
+                Write-Error "Insufficient space on drive ${dataDriveName}: ${dataAvailableMB}MB available, ${combinedRequiredMB}MB required for both data and log (including ${SafetyMarginPercent}% safety margin)"
                 return $false
             }
         }
