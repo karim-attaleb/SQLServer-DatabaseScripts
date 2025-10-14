@@ -443,7 +443,7 @@ function Test-DbaSufficientDiskSpace {
         Write-Verbose "Required space: Data drive = ${requiredDataSpaceWithMarginMB}MB (${NumberOfDataFiles} files × ${dataSizeMB}MB + ${SafetyMarginPercent}% margin)"
         Write-Verbose "Required space: Log drive = ${requiredLogSpaceWithMarginMB}MB (${logSizeMB}MB + ${SafetyMarginPercent}% margin)"
         
-        $dataDriveName = "${DataDrive}:"
+        $dataDriveName = "${DataDrive}:\"
         $dataDiskInfo = $diskInfo | Where-Object { $_.Name -eq $dataDriveName }
         
         if (-not $dataDiskInfo) {
@@ -460,7 +460,7 @@ function Test-DbaSufficientDiskSpace {
         }
         
         if ($LogDrive -ne $DataDrive) {
-            $logDriveName = "${LogDrive}:"
+            $logDriveName = "${LogDrive}:\"
             $logDiskInfo = $diskInfo | Where-Object { $_.Name -eq $logDriveName }
             
             if (-not $logDiskInfo) {
