@@ -93,16 +93,16 @@ Describe "Calculate-OptimalDataFiles" {
     }
     
     Context "When calculation exceeds maximum" {
-        It "Should return 10 files when size is 100GB and threshold is 10GB" {
-            Calculate-OptimalDataFiles -ExpectedDatabaseSize "100GB" -FileSizeThreshold "10GB" | Should -Be 10
+        It "Should cap at 8 files when size is 100GB and threshold is 10GB" {
+            Calculate-OptimalDataFiles -ExpectedDatabaseSize "100GB" -FileSizeThreshold "10GB" | Should -Be 8
         }
         
-        It "Should return 103 files when size is 1TB and threshold is 10GB" {
-            Calculate-OptimalDataFiles -ExpectedDatabaseSize "1TB" -FileSizeThreshold "10GB" | Should -Be 103
+        It "Should cap at 8 files when size is 1TB and threshold is 10GB" {
+            Calculate-OptimalDataFiles -ExpectedDatabaseSize "1TB" -FileSizeThreshold "10GB" | Should -Be 8
         }
         
-        It "Should return 20 files when size is 200GB and threshold is 10GB" {
-            Calculate-OptimalDataFiles -ExpectedDatabaseSize "200GB" -FileSizeThreshold "10GB" | Should -Be 20
+        It "Should cap at 8 files when size is 200GB and threshold is 10GB" {
+            Calculate-OptimalDataFiles -ExpectedDatabaseSize "200GB" -FileSizeThreshold "10GB" | Should -Be 8
         }
     }
     

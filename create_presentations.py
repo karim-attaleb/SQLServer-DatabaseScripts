@@ -270,12 +270,12 @@ def create_overview_presentation():
     slide = create_content_slide(prs, "✨ Key Features")
     add_features_diagram(slide)
     
-    slide = create_content_slide(prs, "🔢 Simplified File Count Logic")
+    slide = create_content_slide(prs, "🔢 Automatic File Count Calculation")
     add_bullet_points(slide, Inches(1), Inches(2), Inches(8), Inches(2), [
         "📐 Logic: If ExpectedSize > Threshold → Calculate files, else → 1 file",
-        "📊 Formula: Ceiling(ExpectedDatabaseSize / FileSizeThreshold)",
-        "📈 Example 1: 5GB database ÷ 10GB threshold = 1 file",
-        "📈 Example 2: 50GB database ÷ 10GB threshold = 5 files"
+        "📊 Formula: Min(Ceiling(ExpectedDatabaseSize / FileSizeThreshold), 8)",
+        "🎯 Maximum 8 files (SQL Server best practice)",
+        "📈 Example: 5GB = 1 file, 50GB = 5 files, 100GB = 8 files (capped)"
     ])
     
     box = slide.shapes.add_shape(
@@ -565,7 +565,7 @@ LogFile: Path to log file for operation logging"""
     box2.line.width = Pt(2)
     
     tf = box2.text_frame
-    tf.text = "if (ExpectedSize > Threshold)\n  numberOfFiles = Ceiling(ExpectedSize / Threshold)\nelse\n  numberOfFiles = 1"
+    tf.text = "if (ExpectedSize > Threshold)\n  numberOfFiles = Min(Ceiling(ExpectedSize / Threshold), 8)\nelse\n  numberOfFiles = 1"
     tf.paragraphs[0].alignment = PP_ALIGN.CENTER
     tf.paragraphs[0].font.size = Pt(18)
     tf.paragraphs[0].font.name = "Courier New"
@@ -574,8 +574,8 @@ LogFile: Path to log file for operation logging"""
     
     add_bullet_points(slide, Inches(1.5), Inches(5), Inches(7), Inches(1.5), [
         "Example 1: 5GB / 10GB → 5GB ≤ 10GB → 1 file",
-        "Example 2: 50GB / 10GB → 50GB > 10GB → Ceiling(5) = 5 files",
-        "Example 3: 100GB / 10GB → 100GB > 10GB → Ceiling(10) = 10 files"
+        "Example 2: 50GB / 10GB → Ceiling(5) = 5 → Min(5, 8) = 5 files",
+        "Example 3: 100GB / 10GB → Ceiling(10) = 10 → Min(10, 8) = 8 files"
     ])
     
     slide = create_content_slide(prs, "💾 Disk Space Validation Logic")

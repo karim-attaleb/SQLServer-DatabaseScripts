@@ -97,14 +97,15 @@ The name of your SQL Server instance. Examples:
 The script automatically calculates the optimal number of data files based on `ExpectedDatabaseSize`:
 
 - **Formula**: 
-  - If `ExpectedDatabaseSize > FileSizeThreshold`: `NumberOfFiles = Ceiling(ExpectedDatabaseSize / FileSizeThreshold)`
+  - If `ExpectedDatabaseSize > FileSizeThreshold`: `NumberOfFiles = Min(Ceiling(ExpectedDatabaseSize / FileSizeThreshold), 8)`
   - Otherwise: 1 file
 - **Minimum**: 1 file
+- **Maximum**: 8 files (SQL Server best practice for proportional fill algorithm efficiency)
 
 #### Examples:
 - Expected: 5GB, Threshold: 10GB → 1 file (size ≤ threshold)
 - Expected: 50GB, Threshold: 10GB → 5 files (ceiling(50/10))
-- Expected: 100GB, Threshold: 10GB → 10 files (ceiling(100/10))
+- Expected: 100GB, Threshold: 10GB → 8 files (ceiling(100/10) = 10, capped at 8)
 
 ### Disk Space Validation
 
@@ -192,7 +193,7 @@ Preview what would happen without actually creating the database:
         Name = "LargeDatabase"
         DataDrive = "D"
         LogDrive = "E"
-        ExpectedDatabaseSize = "50GB"  # Results in 5 files (ceiling(50GB / 10GB) = 5)
+        ExpectedDatabaseSize = "50GB"  # Results in 5 files (ceiling(50GB / 10GB) = 5, max 8)
     }
     FileSizes = @{
         DataSize = "1GB"

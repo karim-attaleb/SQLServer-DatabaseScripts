@@ -312,7 +312,8 @@ function Enable-QueryStore {
 .DESCRIPTION
     Determines the optimal number of data files to create for a database. If the expected
     database size exceeds the file size threshold, it calculates the number of files needed
-    by dividing the expected size by the threshold. Otherwise, returns 1 file.
+    by dividing the expected size by the threshold, capped at a maximum of 8 files.
+    Otherwise, returns 1 file.
 
 .PARAMETER ExpectedDatabaseSize
     The expected total size of the database as a string with units (e.g., "50GB", "500MB", "1TB").
@@ -333,18 +334,22 @@ function Enable-QueryStore {
     Database size is below threshold, so only 1 file is needed.
 
 .EXAMPLE
-    Calculate-OptimalDataFiles -ExpectedDatabaseSize "25GB" -FileSizeThreshold "10GB"
-    Returns: 3
-    Calculates 3 files needed (ceiling(25GB / 10GB) = 3).
+    Calculate-OptimalDataFiles -ExpectedDatabaseSize "100GB" -FileSizeThreshold "10GB"
+    Returns: 8
+    Would calculate 10 files, but is capped at 8 files (SQL Server best practice).
 
 .OUTPUTS
     System.Int32
-    The optimal number of data files to create (minimum 1).
+    The optimal number of data files to create (between 1 and 8).
 
 .NOTES
     Formula: 
-    - If ExpectedDatabaseSize > FileSizeThreshold: Ceiling(ExpectedDatabaseSize / FileSizeThreshold)
+    - If ExpectedDatabaseSize > FileSizeThreshold: Min(Ceiling(ExpectedDatabaseSize / FileSizeThreshold), 8)
     - Otherwise: 1
+    
+    SQL Server uses a proportional fill algorithm across multiple data files in a filegroup.
+    While you can have more than 8 files, performance benefits diminish and management
+    complexity increases beyond 8 files for most workloads.
 #>
 function Calculate-OptimalDataFiles {
     [CmdletBinding()]
@@ -368,8 +373,9 @@ function Calculate-OptimalDataFiles {
         }
         
         if ($expectedSizeMB -gt $thresholdMB) {
-            $optimalFiles = [Math]::Ceiling($expectedSizeMB / $thresholdMB)
-            Write-Verbose "Expected size ($expectedSizeMB MB) exceeds threshold ($thresholdMB MB): calculating $optimalFiles files"
+            $calculatedFiles = [Math]::Ceiling($expectedSizeMB / $thresholdMB)
+            $optimalFiles = [Math]::Min($calculatedFiles, 8)
+            Write-Verbose "Expected size ($expectedSizeMB MB) exceeds threshold ($thresholdMB MB): calculated $calculatedFiles files, capped at $optimalFiles"
         }
         else {
             $optimalFiles = 1
