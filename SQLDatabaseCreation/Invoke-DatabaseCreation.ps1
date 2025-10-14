@@ -66,7 +66,7 @@ try {
         Write-Host "Installing dbatools module..." -ForegroundColor Yellow
         Install-Module -Name dbatools -Force -AllowClobber -Scope CurrentUser -SkipPublisherCheck
     }
-    Import-Module dbatools -ErrorAction Stop
+    Import-Module dbatools -ErrorAction Stop -DisableNameChecking
     
     $modulePath = Join-Path $PSScriptRoot "DatabaseUtils.psm1"
     if (-not (Test-Path $modulePath)) {
