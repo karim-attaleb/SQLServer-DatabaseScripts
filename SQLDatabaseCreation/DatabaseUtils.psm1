@@ -105,7 +105,13 @@ function Write-Log {
         [string]$Level = "Info",
         
         [Parameter(Mandatory = $true)]
-        [string]$LogFile
+        [string]$LogFile,
+        
+        [Parameter(Mandatory = $false)]
+        [bool]$EnableEventLog = $false,
+        
+        [Parameter(Mandatory = $false)]
+        [string]$EventLogSource = "SQLDatabaseScripts"
     )
 
     try {
@@ -121,6 +127,32 @@ function Write-Log {
         
         Write-Host $logEntry -ForegroundColor $colorMap[$Level]
         Add-Content -Path $LogFile -Value $logEntry -Encoding UTF8 -ErrorAction Stop
+        
+        if ($EnableEventLog) {
+            try {
+                if (-not [System.Diagnostics.EventLog]::SourceExists($EventLogSource)) {
+                    New-EventLog -LogName Application -Source $EventLogSource -ErrorAction SilentlyContinue
+                }
+                
+                $eventType = switch ($Level) {
+                    "Error" { "Error" }
+                    "Warning" { "Warning" }
+                    default { "Information" }
+                }
+                
+                $eventId = switch ($Level) {
+                    "Error" { 1001 }
+                    "Warning" { 2001 }
+                    "Success" { 3001 }
+                    default { 4001 }
+                }
+                
+                Write-EventLog -LogName Application -Source $EventLogSource -EntryType $eventType -EventId $eventId -Message $Message -ErrorAction SilentlyContinue
+            }
+            catch {
+                Write-Verbose "Could not write to Windows Event Log (may require admin privileges): $($_.Exception.Message)"
+            }
+        }
     }
     catch {
         Write-Warning "Failed to write to log file: $($_.Exception.Message)"
@@ -171,8 +203,17 @@ function Initialize-Directories {
         [string]$ServerInstanceName,
         
         [Parameter(Mandatory = $true)]
-        [string]$LogFile
+        [string]$LogFile,
+        
+        [Parameter(Mandatory = $false)]
+        [bool]$EnableEventLog = $false,
+        
+        [Parameter(Mandatory = $false)]
+        [string]$EventLogSource = "SQLDatabaseScripts"
     )
+
+    Write-Log -Message "Initializing directory structure for SQL Server instance: $ServerInstanceName" -Level Info -LogFile $LogFile -EnableEventLog $EnableEventLog -EventLogSource $EventLogSource
+    Write-Log -Message "Data drive: ${DataDrive}:\, Log drive: ${LogDrive}:\" -Level Info -LogFile $LogFile -EnableEventLog $false
 
     $paths = @(
         "$DataDrive`:\$ServerInstanceName\data",
@@ -182,16 +223,18 @@ function Initialize-Directories {
     foreach ($path in $paths) {
         try {
             if (-not (Test-Path -Path $path)) {
+                Write-Log -Message "Creating directory: $path" -Level Info -LogFile $LogFile -EnableEventLog $false
                 New-Item -ItemType Directory -Path $path -Force -ErrorAction Stop | Out-Null
-                Write-Log -Message "Created directory: $path" -Level Info -LogFile $LogFile
+                Write-Log -Message "Successfully created directory: $path" -Level Success -LogFile $LogFile -EnableEventLog $EnableEventLog -EventLogSource $EventLogSource
                 Write-Verbose "Successfully created directory: $path"
             }
             else {
+                Write-Log -Message "Directory already exists: $path" -Level Info -LogFile $LogFile -EnableEventLog $false
                 Write-Verbose "Directory already exists: $path"
             }
         }
         catch {
-            Write-Log -Message "Failed to create directory $path`: $($_.Exception.Message)" -Level Error -LogFile $LogFile
+            Write-Log -Message "Failed to create directory $path`: $($_.Exception.Message)" -Level Error -LogFile $LogFile -EnableEventLog $EnableEventLog -EventLogSource $EventLogSource
             throw
         }
     }
@@ -428,7 +471,10 @@ function Test-DbaSufficientDiskSpace {
 
     try {
         Write-Verbose "Checking disk space on SQL Server host: $SqlInstance"
+        Write-Verbose "Parameters: DataDrive=${DataDrive}, LogDrive=${LogDrive}, NumberOfDataFiles=${NumberOfDataFiles}, DataSize=${DataSize}, LogSize=${LogSize}, SafetyMargin=${SafetyMarginPercent}%"
+        
         $diskInfo = Get-DbaDiskSpace -ComputerName $SqlInstance -ErrorAction Stop
+        Write-Verbose "Retrieved disk information for $($diskInfo.Count) drive(s)"
         
         $dataSizeMB = Convert-SizeToInt -SizeString $DataSize
         $logSizeMB = Convert-SizeToInt -SizeString $LogSize
@@ -440,19 +486,25 @@ function Test-DbaSufficientDiskSpace {
         $requiredDataSpaceWithMarginMB = [Math]::Ceiling($requiredDataSpaceMB * $safetyMultiplier)
         $requiredLogSpaceWithMarginMB = [Math]::Ceiling($requiredLogSpaceMB * $safetyMultiplier)
         
+        Write-Verbose "Converted sizes: DataSize=${dataSizeMB}MB, LogSize=${logSizeMB}MB"
         Write-Verbose "Required space: Data drive = ${requiredDataSpaceWithMarginMB}MB (${NumberOfDataFiles} files × ${dataSizeMB}MB + ${SafetyMarginPercent}% margin)"
         Write-Verbose "Required space: Log drive = ${requiredLogSpaceWithMarginMB}MB (${logSizeMB}MB + ${SafetyMarginPercent}% margin)"
         
-        $dataDriveName = "${DataDrive}:"
+        $dataDriveName = "${DataDrive}:\\"
         $dataDiskInfo = $diskInfo | Where-Object { $_.Name -eq $dataDriveName }
         
         if (-not $dataDiskInfo) {
             Write-Error "Data drive ${dataDriveName} not found on SQL Server host"
+            Write-Verbose "Available drives: $($diskInfo | ForEach-Object { $_.Name } | Join-String -Separator ', ')"
             return $false
         }
         
         $dataAvailableMB = [Math]::Floor($dataDiskInfo.Free / 1MB)
-        Write-Verbose "Data drive ${dataDriveName} has ${dataAvailableMB}MB free"
+        $dataTotalMB = [Math]::Floor($dataDiskInfo.Size / 1MB)
+        $dataUsedMB = $dataTotalMB - $dataAvailableMB
+        $dataUsedPercent = [Math]::Round(($dataUsedMB / $dataTotalMB) * 100, 2)
+        
+        Write-Verbose "Data drive ${dataDriveName} disk space: ${dataAvailableMB}MB free / ${dataTotalMB}MB total (${dataUsedPercent}% used)"
         
         if ($dataAvailableMB -lt $requiredDataSpaceWithMarginMB) {
             Write-Error "Insufficient space on data drive ${dataDriveName}: ${dataAvailableMB}MB available, ${requiredDataSpaceWithMarginMB}MB required (including ${SafetyMarginPercent}% safety margin)"
@@ -460,16 +512,21 @@ function Test-DbaSufficientDiskSpace {
         }
         
         if ($LogDrive -ne $DataDrive) {
-            $logDriveName = "${LogDrive}:"
+            $logDriveName = "${LogDrive}:\\"
             $logDiskInfo = $diskInfo | Where-Object { $_.Name -eq $logDriveName }
             
             if (-not $logDiskInfo) {
                 Write-Error "Log drive ${logDriveName} not found on SQL Server host"
+                Write-Verbose "Available drives: $($diskInfo | ForEach-Object { $_.Name } | Join-String -Separator ', ')"
                 return $false
             }
             
             $logAvailableMB = [Math]::Floor($logDiskInfo.Free / 1MB)
-            Write-Verbose "Log drive ${logDriveName} has ${logAvailableMB}MB free"
+            $logTotalMB = [Math]::Floor($logDiskInfo.Size / 1MB)
+            $logUsedMB = $logTotalMB - $logAvailableMB
+            $logUsedPercent = [Math]::Round(($logUsedMB / $logTotalMB) * 100, 2)
+            
+            Write-Verbose "Log drive ${logDriveName} disk space: ${logAvailableMB}MB free / ${logTotalMB}MB total (${logUsedPercent}% used)"
             
             if ($logAvailableMB -lt $requiredLogSpaceWithMarginMB) {
                 Write-Error "Insufficient space on log drive ${logDriveName}: ${logAvailableMB}MB available, ${requiredLogSpaceWithMarginMB}MB required (including ${SafetyMarginPercent}% safety margin)"

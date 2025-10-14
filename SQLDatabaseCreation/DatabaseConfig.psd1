@@ -33,4 +33,9 @@
 
     # Logging
     LogFile = "DatabaseCreation.log"
+    
+    # Windows Event Log integration (requires administrative privileges)
+    # Set to $true to write important events to Windows Application Event Log
+    EnableEventLog = $true
+    EventLogSource = "SQLDatabaseScripts"
 }

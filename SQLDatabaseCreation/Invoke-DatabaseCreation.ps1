@@ -94,36 +94,49 @@ catch {
 }
 
 try {
-    Write-Log -Message "Starting database creation process" -Level Info -LogFile $logFile
+    $enableEventLog = if ($config.EnableEventLog) { $config.EnableEventLog } else { $false }
+    $eventLogSource = if ($config.EventLogSource) { $config.EventLogSource } else { "SQLDatabaseScripts" }
+    
+    Write-Log -Message "Starting database creation process" -Level Info -LogFile $logFile -EnableEventLog $enableEventLog -EventLogSource $eventLogSource
+    Write-Log -Message "Configuration loaded from: $ConfigPath" -Level Info -LogFile $logFile -EnableEventLog $false
+    Write-Log -Message "Target SQL Instance: $($config.SqlInstance), Database: $($config.Database.Name)" -Level Info -LogFile $logFile -EnableEventLog $false
+    Write-Log -Message "Event Log integration: $(if ($enableEventLog) { 'Enabled' } else { 'Disabled' })" -Level Info -LogFile $logFile -EnableEventLog $false
 
     # Validate SQL connection
+    Write-Log -Message "Connecting to SQL Server instance: $($config.SqlInstance)..." -Level Info -LogFile $logFile -EnableEventLog $false
     $connectParams = @{
         SqlInstance = $config.SqlInstance
         TrustServerCertificate = $true
     }
     $server = Connect-DbaInstance @connectParams
-    Write-Log -Message "Successfully connected to SQL instance: $($config.SqlInstance)" -Level Success -LogFile $logFile
+    Write-Log -Message "Successfully connected to SQL instance: $($config.SqlInstance)" -Level Success -LogFile $logFile -EnableEventLog $enableEventLog -EventLogSource $eventLogSource
+    Write-Log -Message "SQL Server version: $($server.VersionString), Edition: $($server.Edition), Instance: $($server.InstanceName)" -Level Info -LogFile $logFile -EnableEventLog $false
 
     # Initialize directories
     Initialize-Directories -DataDrive $config.Database.DataDrive `
                           -LogDrive $config.Database.LogDrive `
                           -ServerInstanceName $server.InstanceName `
-                          -LogFile $logFile
+                          -LogFile $logFile `
+                          -EnableEventLog $enableEventLog `
+                          -EventLogSource $eventLogSource
 
     # Determine number of data files
     if ($config.Database.ExpectedDatabaseSize) {
+        Write-Log -Message "Calculating optimal number of data files based on expected database size..." -Level Info -LogFile $logFile -EnableEventLog $false
         $numberOfDataFiles = Calculate-OptimalDataFiles `
             -ExpectedDatabaseSize $config.Database.ExpectedDatabaseSize `
             -FileSizeThreshold $config.FileSizes.FileSizeThreshold
-        Write-Log -Message "Calculated optimal number of data files: $numberOfDataFiles (based on expected size: $($config.Database.ExpectedDatabaseSize), threshold: $($config.FileSizes.FileSizeThreshold))" -Level Info -LogFile $logFile
+        Write-Log -Message "Calculated optimal number of data files: $numberOfDataFiles (based on expected size: $($config.Database.ExpectedDatabaseSize), threshold: $($config.FileSizes.FileSizeThreshold))" -Level Info -LogFile $logFile -EnableEventLog $enableEventLog -EventLogSource $eventLogSource
     }
     else {
         $numberOfDataFiles = $config.Database.NumberOfDataFiles
-        Write-Log -Message "Using configured number of data files: $numberOfDataFiles" -Level Info -LogFile $logFile
+        Write-Log -Message "Using configured number of data files: $numberOfDataFiles" -Level Info -LogFile $logFile -EnableEventLog $false
     }
+    
+    Write-Log -Message "File configuration: DataSize=$($config.FileSizes.DataSize), LogSize=$($config.FileSizes.LogSize), DataGrowth=$($config.FileSizes.DataGrowth), LogGrowth=$($config.FileSizes.LogGrowth)" -Level Info -LogFile $logFile -EnableEventLog $false
 
     # Validate sufficient disk space
-    Write-Log -Message "Validating disk space availability..." -Level Info -LogFile $logFile
+    Write-Log -Message "Validating disk space availability on data drive ${($config.Database.DataDrive)}:\ and log drive ${($config.Database.LogDrive)}:\..." -Level Info -LogFile $logFile -EnableEventLog $false
     $hasSufficientSpace = Test-DbaSufficientDiskSpace `
         -SqlInstance $config.SqlInstance `
         -DataDrive $config.Database.DataDrive `
@@ -135,22 +148,34 @@ try {
     
     if (-not $hasSufficientSpace) {
         $errorMsg = "Disk space validation failed. Please free up space on the drives or reduce database file sizes."
-        Write-Log -Message $errorMsg -Level Error -LogFile $logFile
+        Write-Log -Message $errorMsg -Level Error -LogFile $logFile -EnableEventLog $enableEventLog -EventLogSource $eventLogSource
         throw $errorMsg
     }
-    Write-Log -Message "Disk space validation passed - sufficient space available" -Level Success -LogFile $logFile
+    Write-Log -Message "Disk space validation passed - sufficient space available on all required drives" -Level Success -LogFile $logFile -EnableEventLog $enableEventLog -EventLogSource $eventLogSource
 
     # Check if database already exists
+    Write-Log -Message "Checking if database '$($config.Database.Name)' already exists..." -Level Info -LogFile $logFile -EnableEventLog $false
     $existingDb = Get-DbaDatabase -SqlInstance $config.SqlInstance -Database $config.Database.Name
     if ($existingDb) {
-        Write-Log -Message "Database '$($config.Database.Name)' already exists. Skipping creation." -Level Warning -LogFile $logFile
+        Write-Log -Message "Database '$($config.Database.Name)' already exists. Skipping creation." -Level Warning -LogFile $logFile -EnableEventLog $enableEventLog -EventLogSource $eventLogSource
         return $config.Database.Name
     }
+    Write-Log -Message "Database '$($config.Database.Name)' does not exist. Proceeding with creation..." -Level Info -LogFile $logFile -EnableEventLog $false
 
     # Create database
     if ($PSCmdlet.ShouldProcess("$($config.Database.Name)", "Create database")) {
         $dataDirectory = "$($config.Database.DataDrive):\$($server.InstanceName)\data"
         $logDirectory = "$($config.Database.LogDrive):\$($server.InstanceName)\log"
+        
+        Write-Log -Message "Preparing to create database '$($config.Database.Name)' with the following configuration:" -Level Info -LogFile $logFile -EnableEventLog $false
+        Write-Log -Message "  - Data directory: $dataDirectory" -Level Info -LogFile $logFile -EnableEventLog $false
+        Write-Log -Message "  - Log directory: $logDirectory" -Level Info -LogFile $logFile -EnableEventLog $false
+        Write-Log -Message "  - Number of data files: $numberOfDataFiles" -Level Info -LogFile $logFile -EnableEventLog $false
+        Write-Log -Message "  - Primary file size: $($config.FileSizes.DataSize)" -Level Info -LogFile $logFile -EnableEventLog $false
+        Write-Log -Message "  - Secondary file size: $($config.FileSizes.DataSize)" -Level Info -LogFile $logFile -EnableEventLog $false
+        Write-Log -Message "  - Log file size: $($config.FileSizes.LogSize)" -Level Info -LogFile $logFile -EnableEventLog $false
+        Write-Log -Message "  - Data file growth: $($config.FileSizes.DataGrowth)" -Level Info -LogFile $logFile -EnableEventLog $false
+        Write-Log -Message "  - Log file growth: $($config.FileSizes.LogGrowth)" -Level Info -LogFile $logFile -EnableEventLog $false
 
         $newDbParams = @{
             SqlInstance = $config.SqlInstance
@@ -167,47 +192,57 @@ try {
         }
 
         try {
+            Write-Log -Message "Creating database '$($config.Database.Name)'..." -Level Info -LogFile $logFile -EnableEventLog $false
             $newDb = New-DbaDatabase @newDbParams -ErrorAction Stop
-            Write-Log -Message "Successfully created database: $($config.Database.Name) with $numberOfDataFiles data file(s)" -Level Success -LogFile $logFile
+            Write-Log -Message "Successfully created database: $($config.Database.Name) with $numberOfDataFiles data file(s)" -Level Success -LogFile $logFile -EnableEventLog $enableEventLog -EventLogSource $eventLogSource
 
             # Set database owner
+            Write-Log -Message "Setting database owner to 'sa'..." -Level Info -LogFile $logFile -EnableEventLog $false
             $db = Get-DbaDatabase -SqlInstance $config.SqlInstance -Database $config.Database.Name -ErrorAction Stop
             if ($db.Owner -ne 'sa') {
                 Set-DbaDbOwner -SqlInstance $config.SqlInstance -Database $config.Database.Name -TargetLogin 'sa' -ErrorAction Stop
-                Write-Log -Message "Changed database owner to SA" -Level Success -LogFile $logFile
+                Write-Log -Message "Changed database owner from '$($db.Owner)' to 'sa'" -Level Success -LogFile $logFile -EnableEventLog $enableEventLog -EventLogSource $eventLogSource
             }
             else {
-                Write-Log -Message "Database owner is already SA" -Level Info -LogFile $logFile
+                Write-Log -Message "Database owner is already 'sa'" -Level Info -LogFile $logFile -EnableEventLog $false
             }
 
             # Enable Query Store if SQL 2016+
             if ($server.VersionMajor -ge 13) {
                 try {
+                    Write-Log -Message "Enabling Query Store for database '$($config.Database.Name)'..." -Level Info -LogFile $logFile -EnableEventLog $false
                     Enable-QueryStore -SqlInstance $config.SqlInstance -Database $config.Database.Name
-                    Write-Log -Message "Enabled Query Store for database" -Level Success -LogFile $logFile
+                    Write-Log -Message "Enabled Query Store for database with optimized settings" -Level Success -LogFile $logFile -EnableEventLog $enableEventLog -EventLogSource $eventLogSource
                 }
                 catch {
-                    Write-Log -Message "Warning: Failed to enable Query Store: $($_.Exception.Message)" -Level Warning -LogFile $logFile
+                    Write-Log -Message "Warning: Failed to enable Query Store: $($_.Exception.Message)" -Level Warning -LogFile $logFile -EnableEventLog $enableEventLog -EventLogSource $eventLogSource
                 }
             }
             else {
-                Write-Log -Message "Query Store not available on SQL Server version $($server.VersionMajor) (requires version 13+)" -Level Info -LogFile $logFile
+                Write-Log -Message "Query Store not available on SQL Server version $($server.VersionMajor) (requires version 13+)" -Level Info -LogFile $logFile -EnableEventLog $false
             }
+            
+            Write-Log -Message "Database '$($config.Database.Name)' configuration summary:" -Level Info -LogFile $logFile -EnableEventLog $false
+            Write-Log -Message "  - Total data files: $numberOfDataFiles" -Level Info -LogFile $logFile -EnableEventLog $false
+            Write-Log -Message "  - Data file location: $dataDirectory" -Level Info -LogFile $logFile -EnableEventLog $false
+            Write-Log -Message "  - Log file location: $logDirectory" -Level Info -LogFile $logFile -EnableEventLog $false
+            Write-Log -Message "  - Owner: sa" -Level Info -LogFile $logFile -EnableEventLog $false
+            Write-Log -Message "  - Query Store: $(if ($server.VersionMajor -ge 13) { 'Enabled' } else { 'Not Available' })" -Level Info -LogFile $logFile -EnableEventLog $false
         }
         catch {
-            Write-Log -Message "Failed to create database: $($_.Exception.Message)" -Level Error -LogFile $logFile
+            Write-Log -Message "Failed to create database: $($_.Exception.Message)" -Level Error -LogFile $logFile -EnableEventLog $enableEventLog -EventLogSource $eventLogSource
             throw
         }
     }
     else {
-        Write-Log -Message "[WHATIF] Would create database: $($config.Database.Name)" -Level Info -LogFile $logFile
+        Write-Log -Message "[WHATIF] Would create database: $($config.Database.Name)" -Level Info -LogFile $logFile -EnableEventLog $false
     }
 
-    Write-Log -Message "Database creation completed successfully!" -Level Success -LogFile $logFile
+    Write-Log -Message "Database creation completed successfully!" -Level Success -LogFile $logFile -EnableEventLog $enableEventLog -EventLogSource $eventLogSource
     return $config.Database.Name
 }
 catch {
-    Write-Log -Message "Script execution failed: $($_.Exception.Message)" -Level Error -LogFile $logFile
-    Write-Log -Message "Stack trace: $($_.ScriptStackTrace)" -Level Error -LogFile $logFile
+    Write-Log -Message "Script execution failed: $($_.Exception.Message)" -Level Error -LogFile $logFile -EnableEventLog $enableEventLog -EventLogSource $eventLogSource
+    Write-Log -Message "Stack trace: $($_.ScriptStackTrace)" -Level Error -LogFile $logFile -EnableEventLog $false
     exit 1
 }
