@@ -49,13 +49,12 @@ Edit the `SQLDatabaseCreation/DatabaseConfig.psd1` file to customize your databa
         DataDrive = "G"  # Drive letter for data files
         LogDrive = "L"   # Drive letter for log files
         
-        # Optional: Expected total database size for automatic file calculation
-        # If specified, the number of data files will be calculated automatically
-        # based on the FileSizeThreshold value
-        ExpectedDatabaseSize = $null  # e.g., "50GB", "500MB", "1TB"
-        
-        # Used when ExpectedDatabaseSize is not specified
-        NumberOfDataFiles = 4
+        # Expected total database size used to automatically calculate
+        # the optimal number of data files based on FileSizeThreshold.
+        # If size > threshold, multiple files will be created.
+        # Otherwise, a single file will be used.
+        # Examples: "50GB", "500MB", "1TB"
+        ExpectedDatabaseSize = "5GB"
     }
 
     # File size configuration
@@ -84,8 +83,7 @@ The name of your SQL Server instance. Examples:
 - **Name**: The name of the database to create
 - **DataDrive**: Drive letter where data files will be stored (without colon)
 - **LogDrive**: Drive letter where log files will be stored (without colon)
-- **ExpectedDatabaseSize**: (Optional) Expected total size of the database. When specified, the script will automatically calculate the optimal number of data files to keep each file under the `FileSizeThreshold`
-- **NumberOfDataFiles**: Number of data files to create. Used only when `ExpectedDatabaseSize` is not specified
+- **ExpectedDatabaseSize**: Expected total size of the database. If size exceeds `FileSizeThreshold`, multiple files will be created; otherwise, a single file is used
 
 #### FileSizes Settings
 - **DataSize**: Initial size of each data file (e.g., "200MB", "1GB")
@@ -96,16 +94,17 @@ The name of your SQL Server instance. Examples:
 
 ### Automatic File Count Calculation
 
-When you specify `ExpectedDatabaseSize` in the configuration, the script automatically calculates the optimal number of data files:
+The script automatically calculates the optimal number of data files based on `ExpectedDatabaseSize`:
 
-- **Formula**: `NumberOfFiles = Ceiling(ExpectedDatabaseSize / FileSizeThreshold)`
+- **Formula**: 
+  - If `ExpectedDatabaseSize > FileSizeThreshold`: `NumberOfFiles = Ceiling(ExpectedDatabaseSize / FileSizeThreshold)`
+  - Otherwise: 1 file
 - **Minimum**: 1 file
-- **Maximum**: 8 files (SQL Server best practice)
 
 #### Examples:
-- Expected: 5GB, Threshold: 10GB → 1 file
-- Expected: 50GB, Threshold: 10GB → 5 files
-- Expected: 100GB, Threshold: 10GB → 8 files (capped at maximum)
+- Expected: 5GB, Threshold: 10GB → 1 file (size ≤ threshold)
+- Expected: 50GB, Threshold: 10GB → 5 files (ceiling(50/10))
+- Expected: 100GB, Threshold: 10GB → 10 files (ceiling(100/10))
 
 ### Disk Space Validation
 
@@ -113,7 +112,7 @@ Before creating a database, the script automatically validates that the target d
 
 **Validation Process:**
 1. Checks available space on both data and log drives using `Get-DbaDiskSpace` from dbatools
-2. Calculates required space: `(NumberOfDataFiles × DataSize) + LogSize`
+2. Calculates required space based on expected database size and file count
 3. Adds 10% safety margin to ensure buffer space for growth
 4. Fails immediately if insufficient space is detected, preventing out-of-space errors during database operations
 
@@ -157,7 +156,7 @@ Preview what would happen without actually creating the database:
 
 ## Examples
 
-### Example 1: Create Database with Manual File Count
+### Example 1: Create Small Database (Single File)
 
 ```powershell
 # DatabaseConfig.psd1
@@ -167,8 +166,7 @@ Preview what would happen without actually creating the database:
         Name = "MyDatabase"
         DataDrive = "D"
         LogDrive = "E"
-        ExpectedDatabaseSize = $null
-        NumberOfDataFiles = 4
+        ExpectedDatabaseSize = "5GB"  # Results in 1 file (5GB < 10GB threshold)
     }
     FileSizes = @{
         DataSize = "500MB"
@@ -184,7 +182,7 @@ Preview what would happen without actually creating the database:
 .\SQLDatabaseCreation\Invoke-DatabaseCreation.ps1 -ConfigPath .\SQLDatabaseCreation\DatabaseConfig.psd1
 ```
 
-### Example 2: Create Database with Automatic File Count
+### Example 2: Create Large Database (Multiple Files)
 
 ```powershell
 # DatabaseConfig.psd1
@@ -194,8 +192,7 @@ Preview what would happen without actually creating the database:
         Name = "LargeDatabase"
         DataDrive = "D"
         LogDrive = "E"
-        ExpectedDatabaseSize = "50GB"  # Automatically calculates 5 files with 10GB threshold
-        NumberOfDataFiles = 4          # Ignored when ExpectedDatabaseSize is set
+        ExpectedDatabaseSize = "50GB"  # Results in 5 files (ceiling(50GB / 10GB) = 5)
     }
     FileSizes = @{
         DataSize = "1GB"

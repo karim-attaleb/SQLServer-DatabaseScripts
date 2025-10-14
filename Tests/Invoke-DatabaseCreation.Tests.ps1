@@ -47,8 +47,8 @@ Describe "Invoke-DatabaseCreation Integration Tests" {
 }
 
 Describe "Database Creation Logic" {
-    Context "When ExpectedDatabaseSize is specified" {
-        It "Should use Calculate-OptimalDataFiles function" {
+    Context "When ExpectedDatabaseSize exceeds threshold" {
+        It "Should calculate multiple data files" {
             Mock Import-PowerShellDataFile {
                 return @{
                     SqlInstance = "localhost"
@@ -57,7 +57,6 @@ Describe "Database Creation Logic" {
                         DataDrive = "G"
                         LogDrive = "L"
                         ExpectedDatabaseSize = "50GB"
-                        NumberOfDataFiles = 4
                     }
                     FileSizes = @{
                         DataSize = "200MB"
@@ -72,8 +71,8 @@ Describe "Database Creation Logic" {
         }
     }
     
-    Context "When ExpectedDatabaseSize is not specified" {
-        It "Should use NumberOfDataFiles from config" {
+    Context "When ExpectedDatabaseSize is below threshold" {
+        It "Should create a single data file" {
             Mock Import-PowerShellDataFile {
                 return @{
                     SqlInstance = "localhost"
@@ -81,8 +80,7 @@ Describe "Database Creation Logic" {
                         Name = "TestDB"
                         DataDrive = "G"
                         LogDrive = "L"
-                        ExpectedDatabaseSize = $null
-                        NumberOfDataFiles = 4
+                        ExpectedDatabaseSize = "5GB"
                     }
                     FileSizes = @{
                         DataSize = "200MB"

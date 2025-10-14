@@ -35,7 +35,7 @@
     The script will:
     1. Validate SQL Server connection
     2. Create necessary directories
-    3. Calculate optimal number of data files (if ExpectedDatabaseSize is specified)
+    3. Calculate optimal number of data files based on ExpectedDatabaseSize
     4. Validate sufficient disk space on data and log drives
     5. Check if database already exists
     6. Create database with specified files
@@ -121,18 +121,11 @@ try {
                           -EventLogSource $eventLogSource
 
     # Determine number of data files
-    if ($config.Database.ExpectedDatabaseSize) {
-        Write-Log -Message "Calculating optimal number of data files based on expected database size..." -Level Info -LogFile $logFile -EnableEventLog $false
-        $numberOfDataFiles = Calculate-OptimalDataFiles `
-            -ExpectedDatabaseSize $config.Database.ExpectedDatabaseSize `
-            -FileSizeThreshold $config.FileSizes.FileSizeThreshold
-        Write-Log -Message "Calculated optimal number of data files: $numberOfDataFiles (based on expected size: $($config.Database.ExpectedDatabaseSize), threshold: $($config.FileSizes.FileSizeThreshold))" -Level Info -LogFile $logFile -EnableEventLog $enableEventLog -EventLogSource $eventLogSource
-    }
-    else {
-        $numberOfDataFiles = $config.Database.NumberOfDataFiles
-        Write-Log -Message "Using configured number of data files: $numberOfDataFiles" -Level Info -LogFile $logFile -EnableEventLog $false
-    }
-    
+    Write-Log -Message "Calculating optimal number of data files based on expected database size..." -Level Info -LogFile $logFile -EnableEventLog $false
+    $numberOfDataFiles = Calculate-OptimalDataFiles `
+        -ExpectedDatabaseSize $config.Database.ExpectedDatabaseSize `
+        -FileSizeThreshold $config.FileSizes.FileSizeThreshold
+    Write-Log -Message "Calculated optimal number of data files: $numberOfDataFiles (based on expected size: $($config.Database.ExpectedDatabaseSize), threshold: $($config.FileSizes.FileSizeThreshold))" -Level Info -LogFile $logFile -EnableEventLog $enableEventLog -EventLogSource $eventLogSource
     Write-Log -Message "File configuration: DataSize=$($config.FileSizes.DataSize), LogSize=$($config.FileSizes.LogSize), DataGrowth=$($config.FileSizes.DataGrowth), LogGrowth=$($config.FileSizes.LogGrowth)" -Level Info -LogFile $logFile -EnableEventLog $false
 
     # Validate sufficient disk space
