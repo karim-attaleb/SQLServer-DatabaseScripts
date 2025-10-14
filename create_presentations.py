@@ -275,7 +275,8 @@ def create_overview_presentation():
         "📐 Logic: If ExpectedSize > Threshold → Calculate files, else → 1 file",
         "📊 Formula: Ceiling(ExpectedDatabaseSize / FileSizeThreshold)",
         "📈 Example 1: 5GB database ÷ 10GB threshold = 1 file",
-        "📈 Example 2: 50GB database ÷ 10GB threshold = 5 files"
+        "📈 Example 2: 50GB database ÷ 10GB threshold = 5 files (max 8)",
+        "🎯 All files are created in the PRIMARY filegroup"
     ])
     
     box = slide.shapes.add_shape(
@@ -575,7 +576,8 @@ LogFile: Path to log file for operation logging"""
     add_bullet_points(slide, Inches(1.5), Inches(5), Inches(7), Inches(1.5), [
         "Example 1: 5GB / 10GB → 5GB ≤ 10GB → 1 file",
         "Example 2: 50GB / 10GB → 50GB > 10GB → Ceiling(5) = 5 files",
-        "Example 3: 100GB / 10GB → 100GB > 10GB → Ceiling(10) = 10 files"
+        "Example 3: 100GB / 10GB → 100GB > 10GB → Ceiling(10) = 10 files (capped at 8)",
+        "All files are created in the PRIMARY filegroup"
     ])
     
     slide = create_content_slide(prs, "💾 Disk Space Validation Logic")

@@ -100,6 +100,8 @@ The script automatically calculates the optimal number of data files based on `E
   - If `ExpectedDatabaseSize > FileSizeThreshold`: `NumberOfFiles = Ceiling(ExpectedDatabaseSize / FileSizeThreshold)`
   - Otherwise: 1 file
 - **Minimum**: 1 file
+- **Maximum**: 8 files (SQL Server best practice)
+- **All files are created in the PRIMARY filegroup**
 
 #### Examples:
 - Expected: 5GB, Threshold: 10GB → 1 file (size ≤ threshold)
@@ -212,6 +214,9 @@ Preview what would happen without actually creating the database:
 
 ### Automatic Directory Creation
 The script automatically creates the necessary directories on the data and log drives if they don't exist.
+
+### Multiple Data Files in PRIMARY Filegroup
+All data files are created in the PRIMARY filegroup following SQL Server best practices. The script automatically calculates the optimal number of files (up to 8) based on the expected database size, and creates all files with equal size in the PRIMARY filegroup to ensure optimal proportional fill algorithm performance.
 
 ### Query Store Enablement
 For SQL Server 2016 and later, Query Store is automatically enabled with optimized settings:
