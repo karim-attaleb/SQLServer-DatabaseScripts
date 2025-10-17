@@ -187,6 +187,22 @@ try {
         try {
             Write-Log -Message "Creating database '$($config.Database.Name)'..." -Level Info -LogFile $logFile -EnableEventLog $false
             $newDb = New-DbaDatabase @newDbParams -ErrorAction Stop
+            
+            # Verify database was actually created
+            if (-not $newDb -or $newDb.Status -ne 'Normal') {
+                $errorMsg = "Database creation failed. New-DbaDatabase did not return a valid database object."
+                Write-Log -Message $errorMsg -Level Error -LogFile $logFile -EnableEventLog $enableEventLog -EventLogSource $eventLogSource
+                throw $errorMsg
+            }
+            
+            # Verify database exists on server
+            $dbCheck = Get-DbaDatabase -SqlInstance $config.SqlInstance -Database $config.Database.Name -ErrorAction SilentlyContinue
+            if (-not $dbCheck) {
+                $errorMsg = "Database creation failed. Database '$($config.Database.Name)' does not exist on server after creation attempt."
+                Write-Log -Message $errorMsg -Level Error -LogFile $logFile -EnableEventLog $enableEventLog -EventLogSource $eventLogSource
+                throw $errorMsg
+            }
+            
             Write-Log -Message "Successfully created database: $($config.Database.Name) with $numberOfDataFiles data file(s)" -Level Success -LogFile $logFile -EnableEventLog $enableEventLog -EventLogSource $eventLogSource
 
             # Set database owner
