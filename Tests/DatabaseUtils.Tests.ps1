@@ -184,12 +184,12 @@ Describe "Test-DbaSufficientDiskSpace" {
             Mock Get-DbaDiskSpace {
                 return @(
                     [PSCustomObject]@{
-                        Name = "G:\\"
+                        Name = "G:\"
                         Free = 50GB
                         Capacity = 100GB
                     },
                     [PSCustomObject]@{
-                        Name = "L:\\"
+                        Name = "L:\"
                         Free = 20GB
                         Capacity = 50GB
                     }
@@ -211,12 +211,12 @@ Describe "Test-DbaSufficientDiskSpace" {
             Mock Get-DbaDiskSpace {
                 return @(
                     [PSCustomObject]@{
-                        Name = "G:\\"
+                        Name = "G:\"
                         Free = 500MB
                         Capacity = 100GB
                     },
                     [PSCustomObject]@{
-                        Name = "L:\\"
+                        Name = "L:\"
                         Free = 50MB
                         Capacity = 50GB
                     }
@@ -232,12 +232,12 @@ Describe "Test-DbaSufficientDiskSpace" {
             Mock Get-DbaDiskSpace {
                 return @(
                     [PSCustomObject]@{
-                        Name = "G:\\"
+                        Name = "G:\"
                         Free = 50GB
                         Capacity = 100GB
                     },
                     [PSCustomObject]@{
-                        Name = "L:\\"
+                        Name = "L:\"
                         Free = 50MB
                         Capacity = 50GB
                     }
@@ -252,7 +252,7 @@ Describe "Test-DbaSufficientDiskSpace" {
             Mock Get-DbaDiskSpace {
                 return @(
                     [PSCustomObject]@{
-                        Name = "G:\\"
+                        Name = "G:\"
                         Free = 2GB
                         Capacity = 100GB
                     }
@@ -268,7 +268,7 @@ Describe "Test-DbaSufficientDiskSpace" {
             Mock Get-DbaDiskSpace {
                 return @(
                     [PSCustomObject]@{
-                        Name = "G:\\"
+                        Name = "G:\"
                         Free = 800MB
                         Capacity = 100GB
                     }
@@ -283,7 +283,7 @@ Describe "Test-DbaSufficientDiskSpace" {
             Mock Get-DbaDiskSpace {
                 return @(
                     [PSCustomObject]@{
-                        Name = "C:\\"
+                        Name = "C:\"
                         Free = 50GB
                         Capacity = 100GB
                     }

@@ -224,9 +224,8 @@ try {
         Write-Log -Message "Preparing to create database '$($config.Database.Name)' with the following configuration:" -Level Info -LogFile $logFile -EnableEventLog $false
         Write-Log -Message "  - Data directory: $dataDirectory" -Level Info -LogFile $logFile -EnableEventLog $false
         Write-Log -Message "  - Log directory: $logDirectory" -Level Info -LogFile $logFile -EnableEventLog $false
-        Write-Log -Message "  - Number of data files: $numberOfDataFiles" -Level Info -LogFile $logFile -EnableEventLog $false
-        Write-Log -Message "  - Primary file size: $($config.FileSizes.DataSize)" -Level Info -LogFile $logFile -EnableEventLog $false
-        Write-Log -Message "  - Secondary file size: $($config.FileSizes.DataSize)" -Level Info -LogFile $logFile -EnableEventLog $false
+        Write-Log -Message "  - Number of data files (all in PRIMARY filegroup): $numberOfDataFiles" -Level Info -LogFile $logFile -EnableEventLog $false
+        Write-Log -Message "  - Data file size: $($config.FileSizes.DataSize) each" -Level Info -LogFile $logFile -EnableEventLog $false
         Write-Log -Message "  - Log file size: $($config.FileSizes.LogSize)" -Level Info -LogFile $logFile -EnableEventLog $false
         Write-Log -Message "  - Data file growth: $($config.FileSizes.DataGrowth)" -Level Info -LogFile $logFile -EnableEventLog $false
         Write-Log -Message "  - Log file growth: $($config.FileSizes.LogGrowth)" -Level Info -LogFile $logFile -EnableEventLog $false
@@ -240,9 +239,6 @@ try {
             LogSize = (Convert-SizeToInt $config.FileSizes.LogSize)
             PrimaryFileGrowth = (Convert-SizeToInt $config.FileSizes.DataGrowth)
             LogGrowth = (Convert-SizeToInt $config.FileSizes.LogGrowth)
-            SecondaryFileCount = [Math]::Max(0, $numberOfDataFiles - 1)
-            SecondaryFilesize = (Convert-SizeToInt $config.FileSizes.DataSize)
-            SecondaryFileGrowth = (Convert-SizeToInt $config.FileSizes.DataGrowth)
         }
 
         try {
@@ -264,7 +260,46 @@ try {
                 throw $errorMsg
             }
             
-            Write-Log -Message "Successfully created database: $($config.Database.Name) with $numberOfDataFiles data file(s)" -Level Success -LogFile $logFile -EnableEventLog $enableEventLog -EventLogSource $eventLogSource
+            Write-Log -Message "Successfully created database: $($config.Database.Name) with PRIMARY data file" -Level Success -LogFile $logFile -EnableEventLog $enableEventLog -EventLogSource $eventLogSource
+            
+            # Add additional files to PRIMARY filegroup if needed
+            if ($numberOfDataFiles -gt 1) {
+                Write-Log -Message "Adding $(($numberOfDataFiles - 1)) additional data file(s) to PRIMARY filegroup..." -Level Info -LogFile $logFile -EnableEventLog $false
+                
+                $dataSizeMB = Convert-SizeToInt $config.FileSizes.DataSize
+                $dataGrowthMB = Convert-SizeToInt $config.FileSizes.DataGrowth
+                
+                for ($i = 2; $i -le $numberOfDataFiles; $i++) {
+                    $logicalFileName = "$($config.Database.Name)_Data$i"
+                    $physicalFileName = "$dataDirectory\$($config.Database.Name)_Data$i.ndf"
+                    
+                    $addFileSql = @"
+ALTER DATABASE [$($config.Database.Name)]
+ADD FILE (
+    NAME = N'$logicalFileName',
+    FILENAME = N'$physicalFileName',
+    SIZE = ${dataSizeMB}MB,
+    FILEGROWTH = ${dataGrowthMB}MB
+) TO FILEGROUP [PRIMARY]
+"@
+                    
+                    if ($PSCmdlet.ShouldProcess("$($config.Database.Name)", "Add data file $i to PRIMARY filegroup")) {
+                        try {
+                            Invoke-DbaQuery -SqlInstance $config.SqlInstance -Database $config.Database.Name -Query $addFileSql -ErrorAction Stop
+                            Write-Log -Message "Added data file $i ($logicalFileName) to PRIMARY filegroup" -Level Info -LogFile $logFile -EnableEventLog $false
+                        }
+                        catch {
+                            Write-Log -Message "Failed to add data file ${i}: $($_.Exception.Message)" -Level Error -LogFile $logFile -EnableEventLog $enableEventLog -EventLogSource $eventLogSource
+                            throw
+                        }
+                    }
+                    else {
+                        Write-Log -Message "[WHATIF] Would add data file $i ($logicalFileName) to PRIMARY filegroup" -Level Info -LogFile $logFile -EnableEventLog $false
+                    }
+                }
+                
+                Write-Log -Message "Successfully added $(($numberOfDataFiles - 1)) additional data file(s) to PRIMARY filegroup" -Level Success -LogFile $logFile -EnableEventLog $enableEventLog -EventLogSource $eventLogSource
+            }
 
             # Set database owner
             Write-Log -Message "Setting database owner to 'sa'..." -Level Info -LogFile $logFile -EnableEventLog $false
@@ -336,7 +371,7 @@ try {
             }
             
             Write-Log -Message "Database '$($config.Database.Name)' configuration summary:" -Level Info -LogFile $logFile -EnableEventLog $false
-            Write-Log -Message "  - Total data files: $numberOfDataFiles" -Level Info -LogFile $logFile -EnableEventLog $false
+            Write-Log -Message "  - Total data files in PRIMARY filegroup: $numberOfDataFiles" -Level Info -LogFile $logFile -EnableEventLog $false
             Write-Log -Message "  - Data file location: $dataDirectory" -Level Info -LogFile $logFile -EnableEventLog $false
             Write-Log -Message "  - Log file location: $logDirectory" -Level Info -LogFile $logFile -EnableEventLog $false
             Write-Log -Message "  - Owner: sa" -Level Info -LogFile $logFile -EnableEventLog $false
