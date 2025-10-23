@@ -112,6 +112,67 @@ try {
     Write-Log -Message "Successfully connected to SQL instance: $($config.SqlInstance)" -Level Success -LogFile $logFile -EnableEventLog $enableEventLog -EventLogSource $eventLogSource
     Write-Log -Message "SQL Server version: $($server.VersionString), Edition: $($server.Edition), Instance: $($server.InstanceName)" -Level Info -LogFile $logFile -EnableEventLog $false
 
+    # Create SQL Server logins if specified in configuration
+    if ($config.Logins -and $config.Logins.Count -gt 0) {
+        Write-Log -Message "Processing SQL Server login creation..." -Level Info -LogFile $logFile -EnableEventLog $false
+        
+        foreach ($loginConfig in $config.Logins) {
+            try {
+                $loginParams = @{
+                    SqlInstance = $config.SqlInstance
+                    LoginName = $loginConfig.LoginName
+                    LoginType = $loginConfig.LoginType
+                    LogFile = $logFile
+                    EnableEventLog = $enableEventLog
+                    EventLogSource = $eventLogSource
+                }
+                
+                # Add SQL Auth password if specified
+                if ($loginConfig.LoginType -eq "SqlLogin") {
+                    if ($loginConfig.Password) {
+                        # Password should be a SecureString
+                        if ($loginConfig.Password -is [SecureString]) {
+                            $loginParams.Password = $loginConfig.Password
+                        }
+                        elseif ($loginConfig.Password -is [string]) {
+                            # Convert plain text to SecureString (for backward compatibility)
+                            $loginParams.Password = ConvertTo-SecureString $loginConfig.Password -AsPlainText -Force
+                        }
+                    }
+                    else {
+                        Write-Log -Message "Warning: SQL Login '$($loginConfig.LoginName)' requires a password. Skipping creation." -Level Warning -LogFile $logFile -EnableEventLog $enableEventLog -EventLogSource $eventLogSource
+                        continue
+                    }
+                }
+                
+                # Add optional parameters if specified
+                if ($loginConfig.ServerRoles) {
+                    $loginParams.ServerRoles = $loginConfig.ServerRoles
+                }
+                if ($loginConfig.DisablePasswordPolicy) {
+                    $loginParams.DisablePasswordPolicy = $true
+                }
+                if ($loginConfig.MustChangePassword) {
+                    $loginParams.MustChangePassword = $true
+                }
+                
+                $result = Add-SqlServerLogin @loginParams
+                
+                if (-not $result) {
+                    Write-Log -Message "Warning: Failed to create login '$($loginConfig.LoginName)'. See previous error messages." -Level Warning -LogFile $logFile -EnableEventLog $enableEventLog -EventLogSource $eventLogSource
+                }
+            }
+            catch {
+                Write-Log -Message "Warning: Exception during login creation for '$($loginConfig.LoginName)': $($_.Exception.Message)" -Level Warning -LogFile $logFile -EnableEventLog $enableEventLog -EventLogSource $eventLogSource
+            }
+        }
+        
+        Write-Log -Message "SQL Server login creation processing completed" -Level Info -LogFile $logFile -EnableEventLog $false
+    }
+    else {
+        Write-Log -Message "No SQL Server logins configured for creation" -Level Info -LogFile $logFile -EnableEventLog $false
+    }
+
     # Initialize directories
     Initialize-Directories -DataDrive $config.Database.DataDrive `
                           -LogDrive $config.Database.LogDrive `
@@ -183,9 +244,25 @@ try {
         try {
             Write-Log -Message "Creating database '$($config.Database.Name)'..." -Level Info -LogFile $logFile -EnableEventLog $false
             $newDb = New-DbaDatabase @newDbParams -ErrorAction Stop
+            
+            # Verify database was actually created
+            if (-not $newDb -or $newDb.Status -ne 'Normal') {
+                $errorMsg = "Database creation failed. New-DbaDatabase did not return a valid database object."
+                Write-Log -Message $errorMsg -Level Error -LogFile $logFile -EnableEventLog $enableEventLog -EventLogSource $eventLogSource
+                throw $errorMsg
+            }
+            
+            # Verify database exists on server
+            $dbCheck = Get-DbaDatabase -SqlInstance $config.SqlInstance -Database $config.Database.Name -ErrorAction SilentlyContinue
+            if (-not $dbCheck) {
+                $errorMsg = "Database creation failed. Database '$($config.Database.Name)' does not exist on server after creation attempt."
+                Write-Log -Message $errorMsg -Level Error -LogFile $logFile -EnableEventLog $enableEventLog -EventLogSource $eventLogSource
+                throw $errorMsg
+            }
+            
             Write-Log -Message "Successfully created database: $($config.Database.Name) with PRIMARY data file" -Level Success -LogFile $logFile -EnableEventLog $enableEventLog -EventLogSource $eventLogSource
             
-            # Add additional files to PRIMARY filegroup if needed (important-comment)
+            # Add additional files to PRIMARY filegroup if needed
             if ($numberOfDataFiles -gt 1) {
                 Write-Log -Message "Adding $(($numberOfDataFiles - 1)) additional data file(s) to PRIMARY filegroup..." -Level Info -LogFile $logFile -EnableEventLog $false
                 
@@ -212,7 +289,7 @@ ADD FILE (
                             Write-Log -Message "Added data file $i ($logicalFileName) to PRIMARY filegroup" -Level Info -LogFile $logFile -EnableEventLog $false
                         }
                         catch {
-                            Write-Log -Message "Failed to add data file $i: $($_.Exception.Message)" -Level Error -LogFile $logFile -EnableEventLog $enableEventLog -EventLogSource $eventLogSource
+                            Write-Log -Message "Failed to add data file ${i}: $($_.Exception.Message)" -Level Error -LogFile $logFile -EnableEventLog $enableEventLog -EventLogSource $eventLogSource
                             throw
                         }
                     }
@@ -250,12 +327,56 @@ ADD FILE (
                 Write-Log -Message "Query Store not available on SQL Server version $($server.VersionMajor) (requires version 13+)" -Level Info -LogFile $logFile -EnableEventLog $false
             }
             
+            # Create database users if specified in configuration
+            if ($config.Users -and $config.Users.Count -gt 0) {
+                Write-Log -Message "Processing database user creation..." -Level Info -LogFile $logFile -EnableEventLog $false
+                
+                foreach ($userConfig in $config.Users) {
+                    try {
+                        $userParams = @{
+                            SqlInstance = $config.SqlInstance
+                            Database = $config.Database.Name
+                            LoginName = $userConfig.LoginName
+                            LogFile = $logFile
+                            EnableEventLog = $enableEventLog
+                            EventLogSource = $eventLogSource
+                        }
+                        
+                        # Add optional parameters if specified
+                        if ($userConfig.UserName) {
+                            $userParams.UserName = $userConfig.UserName
+                        }
+                        if ($userConfig.DatabaseRoles) {
+                            $userParams.DatabaseRoles = $userConfig.DatabaseRoles
+                        }
+                        if ($userConfig.DefaultSchema) {
+                            $userParams.DefaultSchema = $userConfig.DefaultSchema
+                        }
+                        
+                        $result = Add-DatabaseUser @userParams
+                        
+                        if (-not $result) {
+                            Write-Log -Message "Warning: Failed to create user '$($userConfig.LoginName)'. See previous error messages." -Level Warning -LogFile $logFile -EnableEventLog $enableEventLog -EventLogSource $eventLogSource
+                        }
+                    }
+                    catch {
+                        Write-Log -Message "Warning: Exception during user creation for '$($userConfig.LoginName)': $($_.Exception.Message)" -Level Warning -LogFile $logFile -EnableEventLog $enableEventLog -EventLogSource $eventLogSource
+                    }
+                }
+                
+                Write-Log -Message "Database user creation processing completed" -Level Info -LogFile $logFile -EnableEventLog $false
+            }
+            else {
+                Write-Log -Message "No database users configured for creation" -Level Info -LogFile $logFile -EnableEventLog $false
+            }
+            
             Write-Log -Message "Database '$($config.Database.Name)' configuration summary:" -Level Info -LogFile $logFile -EnableEventLog $false
             Write-Log -Message "  - Total data files in PRIMARY filegroup: $numberOfDataFiles" -Level Info -LogFile $logFile -EnableEventLog $false
             Write-Log -Message "  - Data file location: $dataDirectory" -Level Info -LogFile $logFile -EnableEventLog $false
             Write-Log -Message "  - Log file location: $logDirectory" -Level Info -LogFile $logFile -EnableEventLog $false
             Write-Log -Message "  - Owner: sa" -Level Info -LogFile $logFile -EnableEventLog $false
             Write-Log -Message "  - Query Store: $(if ($server.VersionMajor -ge 13) { 'Enabled' } else { 'Not Available' })" -Level Info -LogFile $logFile -EnableEventLog $false
+            Write-Log -Message "  - Database Users: $(if ($config.Users -and $config.Users.Count -gt 0) { $config.Users.Count } else { 'None' })" -Level Info -LogFile $logFile -EnableEventLog $false
         }
         catch {
             Write-Log -Message "Failed to create database: $($_.Exception.Message)" -Level Error -LogFile $logFile -EnableEventLog $enableEventLog -EventLogSource $eventLogSource
@@ -264,6 +385,9 @@ ADD FILE (
     }
     else {
         Write-Log -Message "[WHATIF] Would create database: $($config.Database.Name)" -Level Info -LogFile $logFile -EnableEventLog $false
+        if ($config.Users -and $config.Users.Count -gt 0) {
+            Write-Log -Message "[WHATIF] Would create $($config.Users.Count) database user(s)" -Level Info -LogFile $logFile -EnableEventLog $false
+        }
     }
 
     Write-Log -Message "Database creation completed successfully!" -Level Success -LogFile $logFile -EnableEventLog $enableEventLog -EventLogSource $eventLogSource
