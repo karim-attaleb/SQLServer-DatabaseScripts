@@ -711,7 +711,6 @@ function Add-SqlServerLogin {
         
         if ($LoginType -eq "SqlLogin") {
             $newLoginParams.SecurePassword = $Password
-            $newLoginParams.LoginType = "SqlLogin"
             
             if ($DisablePasswordPolicy) {
                 $newLoginParams.PasswordPolicyEnforced = $false
@@ -724,7 +723,7 @@ function Add-SqlServerLogin {
             }
         }
         elseif ($LoginType -eq "WindowsUser") {
-            $newLoginParams.LoginType = "WindowsUser"
+            $newLoginParams.WindowsLogin = $true
         }
         
         $newLogin = New-DbaLogin @newLoginParams
