@@ -119,6 +119,21 @@ try {
         
         foreach ($loginConfig in $config.Logins) {
             try {
+                # Validate LoginType value before proceeding
+                if ($loginConfig.LoginType -eq "WindowsUser") {
+                    $errorMsg = "BREAKING CHANGE: LoginType 'WindowsUser' has been renamed to 'WindowsLogin' for consistency. Please update your configuration file: LoginType = 'WindowsLogin'"
+                    Write-Log -Message $errorMsg -Level Error -LogFile $logFile -EnableEventLog $enableEventLog -EventLogSource $eventLogSource
+                    Write-Error $errorMsg
+                    continue
+                }
+                
+                if ($loginConfig.LoginType -notin @("SqlLogin", "WindowsLogin")) {
+                    $errorMsg = "Invalid LoginType '$($loginConfig.LoginType)' for login '$($loginConfig.LoginName)'. Valid values are: 'SqlLogin' or 'WindowsLogin'"
+                    Write-Log -Message $errorMsg -Level Error -LogFile $logFile -EnableEventLog $enableEventLog -EventLogSource $eventLogSource
+                    Write-Error $errorMsg
+                    continue
+                }
+                
                 $loginParams = @{
                     SqlInstance = $config.SqlInstance
                     LoginName = $loginConfig.LoginName
