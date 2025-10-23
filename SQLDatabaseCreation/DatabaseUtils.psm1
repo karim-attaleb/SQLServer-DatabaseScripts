@@ -552,6 +552,227 @@ function Test-DbaSufficientDiskSpace {
 
 <#
 .SYNOPSIS
+    Creates a SQL Server login with specified authentication type and permissions.
+
+.DESCRIPTION
+    Creates a new SQL Server login (server-level principal) that can be used to connect to SQL Server.
+    Supports both SQL Authentication (username/password) and Windows Authentication.
+    
+    The function will:
+    - Check if login already exists (skip if present with warning)
+    - Create SQL Authentication or Windows Authentication login
+    - Assign server-level roles if specified
+    - Enforce password policy for SQL logins (by default)
+    - Log all operations with detailed messages
+
+.PARAMETER SqlInstance
+    The SQL Server instance where the login will be created.
+
+.PARAMETER LoginName
+    The name of the login to create.
+    For SQL Authentication: any valid SQL identifier (e.g., "AppUser", "sa_backup")
+    For Windows Authentication: must be in format DOMAIN\Username or COMPUTER\Username
+
+.PARAMETER LoginType
+    The type of authentication for the login.
+    Valid values: "SqlLogin" or "WindowsUser"
+    - SqlLogin: SQL Server authentication (requires Password parameter)
+    - WindowsUser: Windows authentication (Password parameter is ignored)
+
+.PARAMETER Password
+    The password for SQL Authentication logins (required when LoginType = "SqlLogin").
+    Must be a SecureString for security.
+    Password policy requirements apply by default (complexity, expiration, etc.)
+
+.PARAMETER ServerRoles
+    Array of server-level role names to assign the login to.
+    Common roles: sysadmin, serveradmin, securityadmin, processadmin, setupadmin, bulkadmin, diskadmin, dbcreator, public
+    If not specified, login gets minimal permissions (public role only).
+
+.PARAMETER DisablePasswordPolicy
+    For SQL logins only: disables password policy enforcement (complexity, expiration, etc.).
+    Use with caution - only for special service accounts or test environments.
+
+.PARAMETER MustChangePassword
+    For SQL logins only: forces user to change password on first login.
+    Defaults to $false.
+
+.PARAMETER LogFile
+    The path to the log file for recording login creation operations.
+
+.PARAMETER EnableEventLog
+    Whether to write significant events to Windows Event Log. Defaults to $false.
+
+.PARAMETER EventLogSource
+    The event source name for Windows Event Log entries. Defaults to 'SQLDatabaseScripts'.
+
+.EXAMPLE
+    $securePassword = ConvertTo-SecureString "P@ssw0rd123!" -AsPlainText -Force
+    Add-SqlServerLogin -SqlInstance "localhost" -LoginName "AppUser" -LoginType "SqlLogin" -Password $securePassword -LogFile "logins.log"
+    Creates a SQL Authentication login with password policy enforced.
+
+.EXAMPLE
+    Add-SqlServerLogin -SqlInstance "SERVER\INSTANCE" -LoginName "DOMAIN\ServiceAccount" -LoginType "WindowsUser" -ServerRoles @("dbcreator") -LogFile "logins.log"
+    Creates a Windows Authentication login with dbcreator server role.
+
+.EXAMPLE
+    $securePassword = ConvertTo-SecureString "ServiceAcct456!" -AsPlainText -Force
+    Add-SqlServerLogin -SqlInstance "localhost" -LoginName "BackupOperator" -LoginType "SqlLogin" -Password $securePassword -ServerRoles @("sysadmin") -LogFile "logins.log"
+    Creates a SQL login with sysadmin permissions.
+
+.OUTPUTS
+    System.Boolean
+    Returns $true if login was created or already exists, $false if creation failed.
+
+.NOTES
+    Prerequisites:
+    - Requires ALTER ANY LOGIN or CREATE LOGIN permissions on SQL Server
+    - For Windows logins, the Windows account must exist
+    - Uses dbatools New-DbaLogin cmdlet
+    
+    Security Considerations:
+    - Always use SecureString for passwords
+    - Follow principle of least privilege for server roles
+    - Enable password policy unless there's a specific reason not to
+    - Consider using Windows Authentication when possible
+#>
+function Add-SqlServerLogin {
+    [CmdletBinding()]
+    [OutputType([bool])]
+    param(
+        [Parameter(Mandatory = $true)]
+        [string]$SqlInstance,
+        
+        [Parameter(Mandatory = $true)]
+        [string]$LoginName,
+        
+        [Parameter(Mandatory = $true)]
+        [ValidateSet("SqlLogin", "WindowsUser")]
+        [string]$LoginType,
+        
+        [Parameter(Mandatory = $false)]
+        [SecureString]$Password,
+        
+        [Parameter(Mandatory = $false)]
+        [string[]]$ServerRoles,
+        
+        [Parameter(Mandatory = $false)]
+        [switch]$DisablePasswordPolicy,
+        
+        [Parameter(Mandatory = $false)]
+        [switch]$MustChangePassword,
+        
+        [Parameter(Mandatory = $true)]
+        [string]$LogFile,
+        
+        [Parameter(Mandatory = $false)]
+        [bool]$EnableEventLog = $false,
+        
+        [Parameter(Mandatory = $false)]
+        [string]$EventLogSource = "SQLDatabaseScripts"
+    )
+
+    try {
+        Write-Log -Message "Creating SQL Server login '$LoginName' (Type: $LoginType)" -Level Info -LogFile $LogFile -EnableEventLog $false
+        Write-Verbose "LoginName: $LoginName, LoginType: $LoginType"
+        
+        # Validate parameters based on login type
+        if ($LoginType -eq "SqlLogin") {
+            if (-not $Password) {
+                $errorMsg = "Password is required for SQL Authentication logins. Use ConvertTo-SecureString to create a secure password."
+                Write-Log -Message $errorMsg -Level Error -LogFile $LogFile -EnableEventLog $EnableEventLog -EventLogSource $EventLogSource
+                return $false
+            }
+        }
+        elseif ($LoginType -eq "WindowsUser") {
+            if ($LoginName -notlike "*\*") {
+                $errorMsg = "Windows login name must be in format DOMAIN\Username or COMPUTER\Username. Received: $LoginName"
+                Write-Log -Message $errorMsg -Level Error -LogFile $LogFile -EnableEventLog $EnableEventLog -EventLogSource $EventLogSource
+                return $false
+            }
+        }
+        
+        # Check if login already exists
+        Write-Verbose "Checking if login '$LoginName' already exists..."
+        $existingLogin = Get-DbaLogin -SqlInstance $SqlInstance -Login $LoginName -ErrorAction SilentlyContinue
+        
+        if ($existingLogin) {
+            Write-Log -Message "Login '$LoginName' already exists on SQL Server instance '$SqlInstance'. Skipping creation." -Level Warning -LogFile $LogFile -EnableEventLog $EnableEventLog -EventLogSource $EventLogSource
+            return $true
+        }
+        
+        # Create the login
+        Write-Verbose "Creating login '$LoginName'..."
+        $newLoginParams = @{
+            SqlInstance = $SqlInstance
+            Login = $LoginName
+            ErrorAction = "Stop"
+        }
+        
+        if ($LoginType -eq "SqlLogin") {
+            $newLoginParams.SecurePassword = $Password
+            $newLoginParams.LoginType = "SqlLogin"
+            
+            if ($DisablePasswordPolicy) {
+                $newLoginParams.PasswordPolicyEnforced = $false
+                Write-Verbose "Password policy enforcement disabled for this login"
+            }
+            
+            if ($MustChangePassword) {
+                $newLoginParams.MustChangePassword = $true
+                Write-Verbose "User must change password on first login"
+            }
+        }
+        elseif ($LoginType -eq "WindowsUser") {
+            $newLoginParams.LoginType = "WindowsUser"
+        }
+        
+        $newLogin = New-DbaLogin @newLoginParams
+        
+        if (-not $newLogin) {
+            $errorMsg = "Failed to create login '$LoginName'. New-DbaLogin did not return a valid login object."
+            Write-Log -Message $errorMsg -Level Error -LogFile $LogFile -EnableEventLog $EnableEventLog -EventLogSource $EventLogSource
+            return $false
+        }
+        
+        Write-Log -Message "Successfully created login '$LoginName' on SQL Server instance '$SqlInstance'" -Level Success -LogFile $LogFile -EnableEventLog $EnableEventLog -EventLogSource $EventLogSource
+        
+        # Assign server roles if specified
+        if ($ServerRoles -and $ServerRoles.Count -gt 0) {
+            Write-Log -Message "Assigning server roles to login '$LoginName': $($ServerRoles -join ', ')" -Level Info -LogFile $LogFile -EnableEventLog $false
+            
+            foreach ($role in $ServerRoles) {
+                try {
+                    Write-Verbose "Adding login '$LoginName' to server role '$role'..."
+                    Add-DbaServerRoleMember -SqlInstance $SqlInstance `
+                                           -ServerRole $role `
+                                           -Login $LoginName `
+                                           -ErrorAction Stop
+                    
+                    Write-Verbose "Successfully added login to server role '$role'"
+                }
+                catch {
+                    Write-Log -Message "Warning: Failed to add login '$LoginName' to server role '$role': $($_.Exception.Message)" -Level Warning -LogFile $LogFile -EnableEventLog $EnableEventLog -EventLogSource $EventLogSource
+                }
+            }
+            
+            Write-Log -Message "Successfully assigned server roles to login '$LoginName'" -Level Success -LogFile $LogFile -EnableEventLog $EnableEventLog -EventLogSource $EventLogSource
+        }
+        else {
+            Write-Log -Message "No server roles specified for login '$LoginName'. Login has public role permissions only." -Level Info -LogFile $LogFile -EnableEventLog $false
+        }
+        
+        return $true
+    }
+    catch {
+        Write-Log -Message "Failed to create login '$LoginName': $($_.Exception.Message)" -Level Error -LogFile $LogFile -EnableEventLog $EnableEventLog -EventLogSource $EventLogSource
+        Write-Verbose "Error details: $($_.Exception | Format-List * -Force | Out-String)"
+        return $false
+    }
+}
+
+<#
+.SYNOPSIS
     Creates a database user with specified permissions and role memberships.
 
 .DESCRIPTION
@@ -732,4 +953,4 @@ function Add-DatabaseUser {
     }
 }
 
-Export-ModuleMember -Function Convert-SizeToInt, Write-Log, Initialize-Directories, Enable-QueryStore, Calculate-OptimalDataFiles, Test-DbaSufficientDiskSpace, Add-DatabaseUser
+Export-ModuleMember -Function Convert-SizeToInt, Write-Log, Initialize-Directories, Enable-QueryStore, Calculate-OptimalDataFiles, Test-DbaSufficientDiskSpace, Add-SqlServerLogin, Add-DatabaseUser

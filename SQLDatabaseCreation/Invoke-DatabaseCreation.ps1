@@ -112,6 +112,67 @@ try {
     Write-Log -Message "Successfully connected to SQL instance: $($config.SqlInstance)" -Level Success -LogFile $logFile -EnableEventLog $enableEventLog -EventLogSource $eventLogSource
     Write-Log -Message "SQL Server version: $($server.VersionString), Edition: $($server.Edition), Instance: $($server.InstanceName)" -Level Info -LogFile $logFile -EnableEventLog $false
 
+    # Create SQL Server logins if specified in configuration
+    if ($config.Logins -and $config.Logins.Count -gt 0) {
+        Write-Log -Message "Processing SQL Server login creation..." -Level Info -LogFile $logFile -EnableEventLog $false
+        
+        foreach ($loginConfig in $config.Logins) {
+            try {
+                $loginParams = @{
+                    SqlInstance = $config.SqlInstance
+                    LoginName = $loginConfig.LoginName
+                    LoginType = $loginConfig.LoginType
+                    LogFile = $logFile
+                    EnableEventLog = $enableEventLog
+                    EventLogSource = $eventLogSource
+                }
+                
+                # Add SQL Auth password if specified
+                if ($loginConfig.LoginType -eq "SqlLogin") {
+                    if ($loginConfig.Password) {
+                        # Password should be a SecureString
+                        if ($loginConfig.Password -is [SecureString]) {
+                            $loginParams.Password = $loginConfig.Password
+                        }
+                        elseif ($loginConfig.Password -is [string]) {
+                            # Convert plain text to SecureString (for backward compatibility)
+                            $loginParams.Password = ConvertTo-SecureString $loginConfig.Password -AsPlainText -Force
+                        }
+                    }
+                    else {
+                        Write-Log -Message "Warning: SQL Login '$($loginConfig.LoginName)' requires a password. Skipping creation." -Level Warning -LogFile $logFile -EnableEventLog $enableEventLog -EventLogSource $eventLogSource
+                        continue
+                    }
+                }
+                
+                # Add optional parameters if specified
+                if ($loginConfig.ServerRoles) {
+                    $loginParams.ServerRoles = $loginConfig.ServerRoles
+                }
+                if ($loginConfig.DisablePasswordPolicy) {
+                    $loginParams.DisablePasswordPolicy = $true
+                }
+                if ($loginConfig.MustChangePassword) {
+                    $loginParams.MustChangePassword = $true
+                }
+                
+                $result = Add-SqlServerLogin @loginParams
+                
+                if (-not $result) {
+                    Write-Log -Message "Warning: Failed to create login '$($loginConfig.LoginName)'. See previous error messages." -Level Warning -LogFile $logFile -EnableEventLog $enableEventLog -EventLogSource $eventLogSource
+                }
+            }
+            catch {
+                Write-Log -Message "Warning: Exception during login creation for '$($loginConfig.LoginName)': $($_.Exception.Message)" -Level Warning -LogFile $logFile -EnableEventLog $enableEventLog -EventLogSource $eventLogSource
+            }
+        }
+        
+        Write-Log -Message "SQL Server login creation processing completed" -Level Info -LogFile $logFile -EnableEventLog $false
+    }
+    else {
+        Write-Log -Message "No SQL Server logins configured for creation" -Level Info -LogFile $logFile -EnableEventLog $false
+    }
+
     # Initialize directories
     Initialize-Directories -DataDrive $config.Database.DataDrive `
                           -LogDrive $config.Database.LogDrive `
