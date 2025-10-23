@@ -419,10 +419,11 @@ function Calculate-OptimalDataFiles {
 .PARAMETER SafetyMarginPercent
     The percentage of additional free space to require as a buffer. Default is 10.
     For example, if required space is 1GB and safety margin is 10%, will require 1.1GB free.
+    Additionally, a fixed 200MB buffer is always reserved on each drive for system monitoring tools.
 
 .EXAMPLE
     Test-DbaSufficientDiskSpace -SqlInstance "localhost" -DataDrive "G" -LogDrive "L" -NumberOfDataFiles 4 -DataSize "200MB" -LogSize "100MB"
-    Checks if G: has at least 880MB free (4×200MB + 10%) and L: has at least 110MB free (100MB + 10%).
+    Checks if G: has at least 1080MB free (4×200MB + 10% + 200MB system buffer) and L: has at least 310MB free (100MB + 10% + 200MB system buffer).
 
 .EXAMPLE
     Test-DbaSufficientDiskSpace -SqlInstance "SERVER01" -DataDrive "D" -LogDrive "E" -NumberOfDataFiles 8 -DataSize "1GB" -LogSize "500MB" -SafetyMarginPercent 20
@@ -480,13 +481,16 @@ function Test-DbaSufficientDiskSpace {
         $requiredDataSpaceMB = $NumberOfDataFiles * $dataSizeMB
         $requiredLogSpaceMB = $logSizeMB
         
+        # Add 200MB buffer for system monitoring tools on each drive
+        $systemMonitoringBufferMB = 200
+        
         $safetyMultiplier = 1 + ($SafetyMarginPercent / 100.0)
-        $requiredDataSpaceWithMarginMB = [Math]::Ceiling($requiredDataSpaceMB * $safetyMultiplier)
-        $requiredLogSpaceWithMarginMB = [Math]::Ceiling($requiredLogSpaceMB * $safetyMultiplier)
+        $requiredDataSpaceWithMarginMB = [Math]::Ceiling($requiredDataSpaceMB * $safetyMultiplier) + $systemMonitoringBufferMB
+        $requiredLogSpaceWithMarginMB = [Math]::Ceiling($requiredLogSpaceMB * $safetyMultiplier) + $systemMonitoringBufferMB
         
         Write-Verbose "Converted sizes: DataSize=${dataSizeMB}MB, LogSize=${logSizeMB}MB"
-        Write-Verbose "Required space: Data drive = ${requiredDataSpaceWithMarginMB}MB (${NumberOfDataFiles} files × ${dataSizeMB}MB + ${SafetyMarginPercent}% margin)"
-        Write-Verbose "Required space: Log drive = ${requiredLogSpaceWithMarginMB}MB (${logSizeMB}MB + ${SafetyMarginPercent}% margin)"
+        Write-Verbose "Required space: Data drive = ${requiredDataSpaceWithMarginMB}MB (${NumberOfDataFiles} files × ${dataSizeMB}MB + ${SafetyMarginPercent}% margin + ${systemMonitoringBufferMB}MB system buffer)"
+        Write-Verbose "Required space: Log drive = ${requiredLogSpaceWithMarginMB}MB (${logSizeMB}MB + ${SafetyMarginPercent}% margin + ${systemMonitoringBufferMB}MB system buffer)"
         
         $dataDriveName = "${DataDrive}:\"
         $dataDiskInfo = $diskInfo | Where-Object { $_.Name -eq $dataDriveName }
@@ -575,9 +579,9 @@ function Test-DbaSufficientDiskSpace {
 
 .PARAMETER LoginType
     The type of authentication for the login.
-    Valid values: "SqlLogin" or "WindowsUser"
+    Valid values: "SqlLogin" or "WindowsLogin"
     - SqlLogin: SQL Server authentication (requires Password parameter)
-    - WindowsUser: Windows authentication (Password parameter is ignored)
+    - WindowsLogin: Windows authentication (Password parameter is ignored)
 
 .PARAMETER Password
     The password for SQL Authentication logins (required when LoginType = "SqlLogin").
@@ -612,7 +616,7 @@ function Test-DbaSufficientDiskSpace {
     Creates a SQL Authentication login with password policy enforced.
 
 .EXAMPLE
-    Add-SqlServerLogin -SqlInstance "SERVER\INSTANCE" -LoginName "DOMAIN\ServiceAccount" -LoginType "WindowsUser" -ServerRoles @("dbcreator") -LogFile "logins.log"
+    Add-SqlServerLogin -SqlInstance "SERVER\INSTANCE" -LoginName "DOMAIN\ServiceAccount" -LoginType "WindowsLogin" -ServerRoles @("dbcreator") -LogFile "logins.log"
     Creates a Windows Authentication login with dbcreator server role.
 
 .EXAMPLE
@@ -647,7 +651,7 @@ function Add-SqlServerLogin {
         [string]$LoginName,
         
         [Parameter(Mandatory = $true)]
-        [ValidateSet("SqlLogin", "WindowsUser")]
+        [ValidateSet("SqlLogin", "WindowsLogin")]
         [string]$LoginType,
         
         [Parameter(Mandatory = $false)]
@@ -684,7 +688,7 @@ function Add-SqlServerLogin {
                 return $false
             }
         }
-        elseif ($LoginType -eq "WindowsUser") {
+        elseif ($LoginType -eq "WindowsLogin") {
             if ($LoginName -notlike "*\*") {
                 $errorMsg = "Windows login name must be in format DOMAIN\Username or COMPUTER\Username. Received: $LoginName"
                 Write-Log -Message $errorMsg -Level Error -LogFile $LogFile -EnableEventLog $EnableEventLog -EventLogSource $EventLogSource
@@ -722,7 +726,7 @@ function Add-SqlServerLogin {
                 Write-Verbose "User must change password on first login"
             }
         }
-        elseif ($LoginType -eq "WindowsUser") {
+        elseif ($LoginType -eq "WindowsLogin") {
             $newLoginParams.WindowsLogin = $true
         }
         
