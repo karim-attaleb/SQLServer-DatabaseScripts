@@ -231,12 +231,56 @@ try {
                 Write-Log -Message "Query Store not available on SQL Server version $($server.VersionMajor) (requires version 13+)" -Level Info -LogFile $logFile -EnableEventLog $false
             }
             
+            # Create database users if specified in configuration
+            if ($config.Users -and $config.Users.Count -gt 0) {
+                Write-Log -Message "Processing database user creation..." -Level Info -LogFile $logFile -EnableEventLog $false
+                
+                foreach ($userConfig in $config.Users) {
+                    try {
+                        $userParams = @{
+                            SqlInstance = $config.SqlInstance
+                            Database = $config.Database.Name
+                            LoginName = $userConfig.LoginName
+                            LogFile = $logFile
+                            EnableEventLog = $enableEventLog
+                            EventLogSource = $eventLogSource
+                        }
+                        
+                        # Add optional parameters if specified
+                        if ($userConfig.UserName) {
+                            $userParams.UserName = $userConfig.UserName
+                        }
+                        if ($userConfig.DatabaseRoles) {
+                            $userParams.DatabaseRoles = $userConfig.DatabaseRoles
+                        }
+                        if ($userConfig.DefaultSchema) {
+                            $userParams.DefaultSchema = $userConfig.DefaultSchema
+                        }
+                        
+                        $result = Add-DatabaseUser @userParams
+                        
+                        if (-not $result) {
+                            Write-Log -Message "Warning: Failed to create user '$($userConfig.LoginName)'. See previous error messages." -Level Warning -LogFile $logFile -EnableEventLog $enableEventLog -EventLogSource $eventLogSource
+                        }
+                    }
+                    catch {
+                        Write-Log -Message "Warning: Exception during user creation for '$($userConfig.LoginName)': $($_.Exception.Message)" -Level Warning -LogFile $logFile -EnableEventLog $enableEventLog -EventLogSource $eventLogSource
+                    }
+                }
+                
+                Write-Log -Message "Database user creation processing completed" -Level Info -LogFile $logFile -EnableEventLog $false
+            }
+            else {
+                Write-Log -Message "No database users configured for creation" -Level Info -LogFile $logFile -EnableEventLog $false
+            }
+            
             Write-Log -Message "Database '$($config.Database.Name)' configuration summary:" -Level Info -LogFile $logFile -EnableEventLog $false
             Write-Log -Message "  - Total data files: $numberOfDataFiles" -Level Info -LogFile $logFile -EnableEventLog $false
             Write-Log -Message "  - Data file location: $dataDirectory" -Level Info -LogFile $logFile -EnableEventLog $false
             Write-Log -Message "  - Log file location: $logDirectory" -Level Info -LogFile $logFile -EnableEventLog $false
             Write-Log -Message "  - Owner: sa" -Level Info -LogFile $logFile -EnableEventLog $false
             Write-Log -Message "  - Query Store: $(if ($server.VersionMajor -ge 13) { 'Enabled' } else { 'Not Available' })" -Level Info -LogFile $logFile -EnableEventLog $false
+            Write-Log -Message "  - Database Users: $(if ($config.Users -and $config.Users.Count -gt 0) { $config.Users.Count } else { 'None' })" -Level Info -LogFile $logFile -EnableEventLog $false
         }
         catch {
             Write-Log -Message "Failed to create database: $($_.Exception.Message)" -Level Error -LogFile $logFile -EnableEventLog $enableEventLog -EventLogSource $eventLogSource
@@ -245,6 +289,9 @@ try {
     }
     else {
         Write-Log -Message "[WHATIF] Would create database: $($config.Database.Name)" -Level Info -LogFile $logFile -EnableEventLog $false
+        if ($config.Users -and $config.Users.Count -gt 0) {
+            Write-Log -Message "[WHATIF] Would create $($config.Users.Count) database user(s)" -Level Info -LogFile $logFile -EnableEventLog $false
+        }
     }
 
     Write-Log -Message "Database creation completed successfully!" -Level Success -LogFile $logFile -EnableEventLog $enableEventLog -EventLogSource $eventLogSource

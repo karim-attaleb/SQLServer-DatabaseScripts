@@ -550,4 +550,186 @@ function Test-DbaSufficientDiskSpace {
     }
 }
 
-Export-ModuleMember -Function Convert-SizeToInt, Write-Log, Initialize-Directories, Enable-QueryStore, Calculate-OptimalDataFiles, Test-DbaSufficientDiskSpace
+<#
+.SYNOPSIS
+    Creates a database user with specified permissions and role memberships.
+
+.DESCRIPTION
+    Creates a new database user mapped to an existing SQL Server login and assigns
+    database roles and permissions. Supports both SQL Authentication and Windows Authentication logins.
+    
+    The function will:
+    - Verify the login exists on the SQL Server instance
+    - Create the database user if it doesn't exist
+    - Assign the user to specified database roles
+    - Skip creation if user already exists with warning
+
+.PARAMETER SqlInstance
+    The SQL Server instance name where the database and user will be created.
+
+.PARAMETER Database
+    The name of the database where the user will be created.
+
+.PARAMETER LoginName
+    The name of the SQL Server login that the database user will be mapped to.
+    The login must already exist on the SQL Server instance.
+    For Windows Authentication: use format DOMAIN\Username
+    For SQL Authentication: use the SQL login name
+
+.PARAMETER UserName
+    The name of the database user to create. If not specified, defaults to the LoginName.
+    Use this when you want the database username to differ from the login name.
+
+.PARAMETER DatabaseRoles
+    Array of database role names to assign the user to.
+    Common roles: db_owner, db_datareader, db_datawriter, db_ddladmin, db_securityadmin, etc.
+    If not specified, user is created with public role only (minimal permissions).
+
+.PARAMETER DefaultSchema
+    The default schema for the user. If not specified, defaults to 'dbo'.
+
+.PARAMETER LogFile
+    The path to the log file for recording user creation operations.
+
+.PARAMETER EnableEventLog
+    Whether to write significant events to Windows Event Log. Defaults to $false.
+
+.PARAMETER EventLogSource
+    The event source name for Windows Event Log entries. Defaults to 'SQLDatabaseScripts'.
+
+.EXAMPLE
+    Add-DatabaseUser -SqlInstance "localhost" -Database "MyDB" -LoginName "AppUser" -DatabaseRoles @("db_datareader", "db_datawriter") -LogFile "creation.log"
+    Creates user 'AppUser' mapped to login 'AppUser' with read/write permissions.
+
+.EXAMPLE
+    Add-DatabaseUser -SqlInstance "SERVER\INSTANCE" -Database "MyDB" -LoginName "DOMAIN\ServiceAccount" -UserName "ServiceUser" -DatabaseRoles @("db_owner") -LogFile "creation.log"
+    Creates user 'ServiceUser' mapped to Windows login 'DOMAIN\ServiceAccount' with db_owner permissions.
+
+.EXAMPLE
+    Add-DatabaseUser -SqlInstance "localhost" -Database "MyDB" -LoginName "ReadOnlyUser" -DatabaseRoles @("db_datareader") -DefaultSchema "reporting" -LogFile "creation.log"
+    Creates user with read-only access and 'reporting' as default schema.
+
+.OUTPUTS
+    System.Boolean
+    Returns $true if user was created or already exists, $false if creation failed.
+
+.NOTES
+    Prerequisites:
+    - The SQL Server login must already exist before creating the database user
+    - Requires appropriate permissions to create users and assign roles
+    - Uses dbatools New-DbaDbUser cmdlet
+#>
+function Add-DatabaseUser {
+    [CmdletBinding()]
+    [OutputType([bool])]
+    param(
+        [Parameter(Mandatory = $true)]
+        [string]$SqlInstance,
+        
+        [Parameter(Mandatory = $true)]
+        [string]$Database,
+        
+        [Parameter(Mandatory = $true)]
+        [string]$LoginName,
+        
+        [Parameter(Mandatory = $false)]
+        [string]$UserName,
+        
+        [Parameter(Mandatory = $false)]
+        [string[]]$DatabaseRoles,
+        
+        [Parameter(Mandatory = $false)]
+        [string]$DefaultSchema = "dbo",
+        
+        [Parameter(Mandatory = $true)]
+        [string]$LogFile,
+        
+        [Parameter(Mandatory = $false)]
+        [bool]$EnableEventLog = $false,
+        
+        [Parameter(Mandatory = $false)]
+        [string]$EventLogSource = "SQLDatabaseScripts"
+    )
+
+    try {
+        # Use LoginName as UserName if UserName not specified
+        if ([string]::IsNullOrWhiteSpace($UserName)) {
+            $UserName = $LoginName
+        }
+
+        Write-Log -Message "Creating database user '$UserName' for database '$Database'" -Level Info -LogFile $LogFile -EnableEventLog $false
+        Write-Verbose "LoginName: $LoginName, UserName: $UserName, DefaultSchema: $DefaultSchema"
+        
+        # Check if login exists
+        Write-Verbose "Verifying login '$LoginName' exists on SQL Server instance..."
+        $login = Get-DbaLogin -SqlInstance $SqlInstance -Login $LoginName -ErrorAction SilentlyContinue
+        
+        if (-not $login) {
+            $errorMsg = "Login '$LoginName' does not exist on SQL Server instance '$SqlInstance'. Create the login first before adding database user."
+            Write-Log -Message $errorMsg -Level Error -LogFile $LogFile -EnableEventLog $EnableEventLog -EventLogSource $EventLogSource
+            return $false
+        }
+        
+        Write-Verbose "Login '$LoginName' verified successfully"
+        
+        # Check if user already exists
+        $existingUser = Get-DbaDbUser -SqlInstance $SqlInstance -Database $Database -User $UserName -ErrorAction SilentlyContinue
+        
+        if ($existingUser) {
+            Write-Log -Message "User '$UserName' already exists in database '$Database'. Skipping creation." -Level Warning -LogFile $LogFile -EnableEventLog $EnableEventLog -EventLogSource $EventLogSource
+            return $true
+        }
+        
+        # Create the database user
+        Write-Verbose "Creating database user '$UserName' mapped to login '$LoginName'..."
+        $newUser = New-DbaDbUser -SqlInstance $SqlInstance `
+                                  -Database $Database `
+                                  -Login $LoginName `
+                                  -Username $UserName `
+                                  -DefaultSchema $DefaultSchema `
+                                  -ErrorAction Stop
+        
+        if (-not $newUser) {
+            $errorMsg = "Failed to create database user '$UserName'. New-DbaDbUser did not return a valid user object."
+            Write-Log -Message $errorMsg -Level Error -LogFile $LogFile -EnableEventLog $EnableEventLog -EventLogSource $EventLogSource
+            return $false
+        }
+        
+        Write-Log -Message "Successfully created database user '$UserName' in database '$Database'" -Level Success -LogFile $LogFile -EnableEventLog $EnableEventLog -EventLogSource $EventLogSource
+        
+        # Assign database roles if specified
+        if ($DatabaseRoles -and $DatabaseRoles.Count -gt 0) {
+            Write-Log -Message "Assigning database roles to user '$UserName': $($DatabaseRoles -join ', ')" -Level Info -LogFile $LogFile -EnableEventLog $false
+            
+            foreach ($role in $DatabaseRoles) {
+                try {
+                    Write-Verbose "Adding user '$UserName' to role '$role'..."
+                    Add-DbaDbRoleMember -SqlInstance $SqlInstance `
+                                        -Database $Database `
+                                        -User $UserName `
+                                        -Role $role `
+                                        -ErrorAction Stop
+                    
+                    Write-Verbose "Successfully added user to role '$role'"
+                }
+                catch {
+                    Write-Log -Message "Warning: Failed to add user '$UserName' to role '$role': $($_.Exception.Message)" -Level Warning -LogFile $LogFile -EnableEventLog $EnableEventLog -EventLogSource $EventLogSource
+                }
+            }
+            
+            Write-Log -Message "Successfully assigned roles to user '$UserName'" -Level Success -LogFile $LogFile -EnableEventLog $EnableEventLog -EventLogSource $EventLogSource
+        }
+        else {
+            Write-Log -Message "No database roles specified for user '$UserName'. User has public role permissions only." -Level Info -LogFile $LogFile -EnableEventLog $false
+        }
+        
+        return $true
+    }
+    catch {
+        Write-Log -Message "Failed to create database user '$UserName': $($_.Exception.Message)" -Level Error -LogFile $LogFile -EnableEventLog $EnableEventLog -EventLogSource $EventLogSource
+        Write-Verbose "Error details: $($_.Exception | Format-List * -Force | Out-String)"
+        return $false
+    }
+}
+
+Export-ModuleMember -Function Convert-SizeToInt, Write-Log, Initialize-Directories, Enable-QueryStore, Calculate-OptimalDataFiles, Test-DbaSufficientDiskSpace, Add-DatabaseUser

@@ -28,6 +28,40 @@
         FileSizeThreshold = "10GB"
     }
 
+    # Database Users (optional)
+    # List of users to create in the database after it's created.
+    # Each user must be mapped to an existing SQL Server login.
+    # Make sure the logins exist before running this script.
+    Users = @(
+        # Example 1: SQL Authentication user with read/write permissions
+        # @{
+        #     LoginName = "AppUser"           # Existing SQL Server login name
+        #     UserName = "AppUser"            # Database username (optional, defaults to LoginName)
+        #     DatabaseRoles = @("db_datareader", "db_datawriter")  # Database roles to assign
+        #     DefaultSchema = "dbo"           # Default schema (optional, defaults to "dbo")
+        # }
+        
+        # Example 2: Windows Authentication user with full control
+        # @{
+        #     LoginName = "DOMAIN\ServiceAccount"
+        #     DatabaseRoles = @("db_owner")
+        # }
+        
+        # Example 3: Read-only user
+        # @{
+        #     LoginName = "ReadOnlyUser"
+        #     DatabaseRoles = @("db_datareader")
+        # }
+        
+        # Example 4: Custom username different from login
+        # @{
+        #     LoginName = "DOMAIN\AppPool"
+        #     UserName = "WebAppUser"
+        #     DatabaseRoles = @("db_datareader", "db_datawriter")
+        #     DefaultSchema = "app"
+        # }
+    )
+
     # Logging
     LogFile = "DatabaseCreation.log"
     
