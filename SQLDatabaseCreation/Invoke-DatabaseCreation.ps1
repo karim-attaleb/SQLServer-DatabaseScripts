@@ -113,11 +113,27 @@ try {
     Write-Log -Message "SQL Server version: $($server.VersionString), Edition: $($server.Edition), Instance: $($server.InstanceName)" -Level Info -LogFile $logFile -EnableEventLog $false
 
     # Create SQL Server logins if specified in configuration
+    $successfulLoginCount = 0
     if ($config.Logins -and $config.Logins.Count -gt 0) {
         Write-Log -Message "Processing SQL Server login creation..." -Level Info -LogFile $logFile -EnableEventLog $false
         
         foreach ($loginConfig in $config.Logins) {
             try {
+                # Validate LoginType value before proceeding
+                if ($loginConfig.LoginType -eq "WindowsUser") {
+                    $errorMsg = "BREAKING CHANGE: LoginType 'WindowsUser' has been renamed to 'WindowsLogin' for consistency. Please update your configuration file: LoginType = 'WindowsLogin'"
+                    Write-Log -Message $errorMsg -Level Error -LogFile $logFile -EnableEventLog $enableEventLog -EventLogSource $eventLogSource
+                    Write-Error $errorMsg
+                    continue
+                }
+                
+                if ($loginConfig.LoginType -notin @("SqlLogin", "WindowsLogin")) {
+                    $errorMsg = "Invalid LoginType '$($loginConfig.LoginType)' for login '$($loginConfig.LoginName)'. Valid values are: 'SqlLogin' or 'WindowsLogin'"
+                    Write-Log -Message $errorMsg -Level Error -LogFile $logFile -EnableEventLog $enableEventLog -EventLogSource $eventLogSource
+                    Write-Error $errorMsg
+                    continue
+                }
+                
                 $loginParams = @{
                     SqlInstance = $config.SqlInstance
                     LoginName = $loginConfig.LoginName
@@ -158,7 +174,10 @@ try {
                 
                 $result = Add-SqlServerLogin @loginParams
                 
-                if (-not $result) {
+                if ($result) {
+                    $successfulLoginCount++
+                }
+                else {
                     Write-Log -Message "Warning: Failed to create login '$($loginConfig.LoginName)'. See previous error messages." -Level Warning -LogFile $logFile -EnableEventLog $enableEventLog -EventLogSource $eventLogSource
                 }
             }
@@ -167,7 +186,7 @@ try {
             }
         }
         
-        Write-Log -Message "SQL Server login creation processing completed" -Level Info -LogFile $logFile -EnableEventLog $false
+        Write-Log -Message "SQL Server login creation processing completed: $successfulLoginCount of $($config.Logins.Count) logins created successfully" -Level Info -LogFile $logFile -EnableEventLog $false
     }
     else {
         Write-Log -Message "No SQL Server logins configured for creation" -Level Info -LogFile $logFile -EnableEventLog $false
@@ -328,6 +347,7 @@ ADD FILE (
             }
             
             # Create database users if specified in configuration
+            $successfulUserCount = 0
             if ($config.Users -and $config.Users.Count -gt 0) {
                 Write-Log -Message "Processing database user creation..." -Level Info -LogFile $logFile -EnableEventLog $false
                 
@@ -355,7 +375,10 @@ ADD FILE (
                         
                         $result = Add-DatabaseUser @userParams
                         
-                        if (-not $result) {
+                        if ($result) {
+                            $successfulUserCount++
+                        }
+                        else {
                             Write-Log -Message "Warning: Failed to create user '$($userConfig.LoginName)'. See previous error messages." -Level Warning -LogFile $logFile -EnableEventLog $enableEventLog -EventLogSource $eventLogSource
                         }
                     }
@@ -364,7 +387,7 @@ ADD FILE (
                     }
                 }
                 
-                Write-Log -Message "Database user creation processing completed" -Level Info -LogFile $logFile -EnableEventLog $false
+                Write-Log -Message "Database user creation processing completed: $successfulUserCount of $($config.Users.Count) users created successfully" -Level Info -LogFile $logFile -EnableEventLog $false
             }
             else {
                 Write-Log -Message "No database users configured for creation" -Level Info -LogFile $logFile -EnableEventLog $false
@@ -376,7 +399,7 @@ ADD FILE (
             Write-Log -Message "  - Log file location: $logDirectory" -Level Info -LogFile $logFile -EnableEventLog $false
             Write-Log -Message "  - Owner: sa" -Level Info -LogFile $logFile -EnableEventLog $false
             Write-Log -Message "  - Query Store: $(if ($server.VersionMajor -ge 13) { 'Enabled' } else { 'Not Available' })" -Level Info -LogFile $logFile -EnableEventLog $false
-            Write-Log -Message "  - Database Users: $(if ($config.Users -and $config.Users.Count -gt 0) { $config.Users.Count } else { 'None' })" -Level Info -LogFile $logFile -EnableEventLog $false
+            Write-Log -Message "  - Database Users: $(if ($successfulUserCount -gt 0) { "$successfulUserCount created successfully" } elseif ($config.Users -and $config.Users.Count -gt 0) { "0 created (all failed)" } else { 'None configured' })" -Level Info -LogFile $logFile -EnableEventLog $false
         }
         catch {
             Write-Log -Message "Failed to create database: $($_.Exception.Message)" -Level Error -LogFile $logFile -EnableEventLog $enableEventLog -EventLogSource $eventLogSource

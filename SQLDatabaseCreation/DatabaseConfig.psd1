@@ -37,7 +37,7 @@
         # Example 1: SQL Authentication login
         # @{
         #     LoginName = "AppUser"
-        #     LoginType = "SqlLogin"              # SqlLogin or WindowsUser
+        #     LoginType = "SqlLogin"              # SqlLogin or WindowsLogin
         #     Password = "P@ssw0rd123!"           # Required for SqlLogin (use SecureString in production)
         #     ServerRoles = @("dbcreator")        # Optional: sysadmin, serveradmin, securityadmin, processadmin, setupadmin, bulkadmin, diskadmin, dbcreator
         #     DisablePasswordPolicy = $false      # Optional: Disable password complexity/expiration
@@ -47,7 +47,7 @@
         # Example 2: Windows Authentication login
         # @{
         #     LoginName = "DOMAIN\ServiceAccount"
-        #     LoginType = "WindowsUser"
+        #     LoginType = "WindowsLogin"
         #     ServerRoles = @("dbcreator")
         # }
         
