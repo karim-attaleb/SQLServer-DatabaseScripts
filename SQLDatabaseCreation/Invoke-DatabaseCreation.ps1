@@ -124,6 +124,8 @@ try {
             }
             Logins = @()
             Users = @()
+            EnableEventLog = $true
+            EventLogSource = "SQLDatabaseScripts"
         }
         Write-Verbose "Using default configuration"
     }
