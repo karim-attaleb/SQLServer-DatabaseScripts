@@ -368,8 +368,10 @@ function Calculate-OptimalDataFiles {
         }
         
         if ($expectedSizeMB -gt $thresholdMB) {
-            $optimalFiles = [Math]::Ceiling($expectedSizeMB / $thresholdMB)
-            Write-Verbose "Expected size ($expectedSizeMB MB) exceeds threshold ($thresholdMB MB): calculating $optimalFiles files"
+            $calculatedFiles = [Math]::Ceiling($expectedSizeMB / $thresholdMB)
+            # Cap at 8 files per SQL Server best practices
+            $optimalFiles = [Math]::Min($calculatedFiles, 8)
+            Write-Verbose "Expected size ($expectedSizeMB MB) exceeds threshold ($thresholdMB MB): calculated $calculatedFiles files, capped at $optimalFiles files"
         }
         else {
             $optimalFiles = 1
