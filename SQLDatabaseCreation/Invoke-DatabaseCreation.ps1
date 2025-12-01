@@ -274,7 +274,13 @@ try {
         -ExpectedDatabaseSize $ExpectedDatabaseSize `
         -FileSizeThreshold $config.FileSizes.FileSizeThreshold
     Write-Log -Message "Calculated optimal number of data files: $numberOfDataFiles (based on expected size: $ExpectedDatabaseSize, threshold: $($config.FileSizes.FileSizeThreshold))" -Level Info -LogFile $logFile -EnableEventLog $enableEventLog -EventLogSource $eventLogSource
-    Write-Log -Message "File configuration: DataSize=$($config.FileSizes.DataSize), LogSize=$($config.FileSizes.LogSize), DataGrowth=$($config.FileSizes.DataGrowth), LogGrowth=$($config.FileSizes.LogGrowth)" -Level Info -LogFile $logFile -EnableEventLog $false
+    
+    # Calculate per-file size based on ExpectedDatabaseSize
+    $expectedSizeMB = Convert-SizeToInt -SizeString $ExpectedDatabaseSize
+    $perFileSizeMB = [int][Math]::Ceiling($expectedSizeMB / $numberOfDataFiles)
+    $perFileSizeString = "${perFileSizeMB}MB"
+    Write-Log -Message "Calculated per-file size: $perFileSizeString (total expected: $ExpectedDatabaseSize / $numberOfDataFiles files)" -Level Info -LogFile $logFile -EnableEventLog $enableEventLog -EventLogSource $eventLogSource
+    Write-Log -Message "File configuration: DataSize=$perFileSizeString, LogSize=$($config.FileSizes.LogSize), DataGrowth=$($config.FileSizes.DataGrowth), LogGrowth=$($config.FileSizes.LogGrowth)" -Level Info -LogFile $logFile -EnableEventLog $false
 
     # Validate sufficient disk space
     Write-Log -Message "Validating disk space availability on data drive ${dataDrive}:\ and log drive ${logDrive}:\..." -Level Info -LogFile $logFile -EnableEventLog $false
@@ -283,7 +289,7 @@ try {
         -DataDrive $dataDrive `
         -LogDrive $logDrive `
         -NumberOfDataFiles $numberOfDataFiles `
-        -DataSize $config.FileSizes.DataSize `
+        -DataSize $perFileSizeString `
         -LogSize $config.FileSizes.LogSize `
         -SafetyMarginPercent 10
     
@@ -312,7 +318,7 @@ try {
         Write-Log -Message "  - Data directory: $dataDirectory" -Level Info -LogFile $logFile -EnableEventLog $false
         Write-Log -Message "  - Log directory: $logDirectory" -Level Info -LogFile $logFile -EnableEventLog $false
         Write-Log -Message "  - Number of data files (all in PRIMARY filegroup): $numberOfDataFiles" -Level Info -LogFile $logFile -EnableEventLog $false
-        Write-Log -Message "  - Data file size: $($config.FileSizes.DataSize) each" -Level Info -LogFile $logFile -EnableEventLog $false
+        Write-Log -Message "  - Data file size: $perFileSizeString each (total: $ExpectedDatabaseSize)" -Level Info -LogFile $logFile -EnableEventLog $false
         Write-Log -Message "  - Log file size: $($config.FileSizes.LogSize)" -Level Info -LogFile $logFile -EnableEventLog $false
         Write-Log -Message "  - Data file growth: $($config.FileSizes.DataGrowth)" -Level Info -LogFile $logFile -EnableEventLog $false
         Write-Log -Message "  - Log file growth: $($config.FileSizes.LogGrowth)" -Level Info -LogFile $logFile -EnableEventLog $false
@@ -322,7 +328,7 @@ try {
             Name = $Database_Name
             DataFilePath = $dataDirectory
             LogFilePath = $logDirectory
-            PrimaryFileSize = (Convert-SizeToInt $config.FileSizes.DataSize)
+            PrimaryFileSize = $perFileSizeMB
             LogSize = (Convert-SizeToInt $config.FileSizes.LogSize)
             PrimaryFileGrowth = (Convert-SizeToInt $config.FileSizes.DataGrowth)
             LogGrowth = (Convert-SizeToInt $config.FileSizes.LogGrowth)
@@ -353,7 +359,6 @@ try {
             if ($numberOfDataFiles -gt 1) {
                 Write-Log -Message "Adding $(($numberOfDataFiles - 1)) additional data file(s) to PRIMARY filegroup..." -Level Info -LogFile $logFile -EnableEventLog $false
                 
-                $dataSizeMB = Convert-SizeToInt $config.FileSizes.DataSize
                 $dataGrowthMB = Convert-SizeToInt $config.FileSizes.DataGrowth
                 
                 for ($i = 2; $i -le $numberOfDataFiles; $i++) {
@@ -365,7 +370,7 @@ ALTER DATABASE [$Database_Name]
 ADD FILE (
     NAME = N'$logicalFileName',
     FILENAME = N'$physicalFileName',
-    SIZE = ${dataSizeMB}MB,
+    SIZE = ${perFileSizeMB}MB,
     FILEGROWTH = ${dataGrowthMB}MB
 ) TO FILEGROUP [PRIMARY]
 "@
