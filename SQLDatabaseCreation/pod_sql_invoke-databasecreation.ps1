@@ -261,6 +261,7 @@ try {
         Write-Log -Message "  - Log file size: $($config.FileSizes.LogSize)" -Level Info -LogFile $logFile -EnableEventLog $false
         Write-Log -Message "  - Data file growth: $($config.FileSizes.DataGrowth)" -Level Info -LogFile $logFile -EnableEventLog $false
         Write-Log -Message "  - Log file growth: $($config.FileSizes.LogGrowth)" -Level Info -LogFile $logFile -EnableEventLog $false
+        Write-Log -Message "  - Collation: $Collation" -Level Info -LogFile $logFile -EnableEventLog $false
 
         $newDbParams = @{
             SqlInstance = $SqlInstance
@@ -271,6 +272,7 @@ try {
             LogSize = (Convert-SizeToInt $config.FileSizes.LogSize)
             PrimaryFileGrowth = (Convert-SizeToInt $config.FileSizes.DataGrowth)
             LogGrowth = (Convert-SizeToInt $config.FileSizes.LogGrowth)
+            Collation = $Collation
         }
 
         try {
@@ -427,6 +429,7 @@ try {
             Write-Log -Message "  - Data file location: $dataDirectory" -Level Info -LogFile $logFile -EnableEventLog $false
             Write-Log -Message "  - Log file location: $logDirectory" -Level Info -LogFile $logFile -EnableEventLog $false
             Write-Log -Message "  - Owner: sa" -Level Info -LogFile $logFile -EnableEventLog $false
+            Write-Log -Message "  - Collation: $Collation" -Level Info -LogFile $logFile -EnableEventLog $false
             Write-Log -Message "  - Query Store: $(if ($server.VersionMajor -ge 13) { 'Enabled' } else { 'Not Available' })" -Level Info -LogFile $logFile -EnableEventLog $false
             Write-Log -Message "  - Pillar: $Pillar, Datagroup: $Datagroup" -Level Info -LogFile $logFile -EnableEventLog $false
             Write-Log -Message "  - Logins/Users created: $($loginNames -join ', ')" -Level Info -LogFile $logFile -EnableEventLog $false
