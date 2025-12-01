@@ -19,26 +19,28 @@
 .PARAMETER ExpectedDatabaseSize
     The expected size of the database (e.g., "50GB", "100GB").
 
+.PARAMETER Pillar
+    The environment pillar. Valid values are 'DEV', 'UAC', 'PROD'.
+
+.PARAMETER Datagroup
+    The data group identifier.
+
 .PARAMETER ConfigPath
     Optional path to a PowerShell data file (.psd1) containing additional configuration.
-    If provided, FileSizes, Logins, Users, and Logging settings will be loaded from the config file.
+    If provided, FileSizes and Logging settings will be loaded from the config file.
     If not provided, default values will be used.
 
 .EXAMPLE
-    .\Invoke-DatabaseCreation.ps1 -SqlInstance "localhost,1433" -Database_Name "MyDatabase" -ExpectedDatabaseSize "50GB"
+    .\pod_sql_invoke-databasecreation.ps1 -SqlInstance "localhost,1433" -Database_Name "MyDatabase" -ExpectedDatabaseSize "50GB" -Pillar "DEV" -Datagroup "DG01"
     Creates a database with the specified parameters using instance default paths.
 
 .EXAMPLE
-    .\Invoke-DatabaseCreation.ps1 -SqlInstance "localhost,1433" -Database_Name "MyDatabase" -ExpectedDatabaseSize "50GB" -WhatIf
+    .\pod_sql_invoke-databasecreation.ps1 -SqlInstance "localhost,1433" -Database_Name "MyDatabase" -ExpectedDatabaseSize "50GB" -Pillar "PROD" -Datagroup "DG01" -WhatIf
     Shows what would happen without actually creating the database.
 
 .EXAMPLE
-    .\Invoke-DatabaseCreation.ps1 -SqlInstance "localhost,1433" -Database_Name "MyDatabase" -ExpectedDatabaseSize "50GB" -Verbose
+    .\pod_sql_invoke-databasecreation.ps1 -SqlInstance "localhost,1433" -Database_Name "MyDatabase" -ExpectedDatabaseSize "50GB" -Pillar "UAC" -Datagroup "DG01" -Verbose
     Creates a database with verbose output showing detailed progress.
-
-.EXAMPLE
-    .\Invoke-DatabaseCreation.ps1 -SqlInstance "localhost,1433" -Database_Name "MyDatabase" -ExpectedDatabaseSize "50GB" -ConfigPath .\DatabaseConfig.psd1
-    Creates a database using the specified parameters and additional settings from the config file.
 
 .NOTES
     Requirements:
@@ -48,11 +50,11 @@
 
     The script will:
     1. Validate SQL Server connection
-    2. Derive data and log drive paths from instance default paths
-    3. Create necessary directories
+    2. Check if database already exists (EXIT EARLY if exists)
+    3. Derive data and log drive paths from instance default paths
     4. Calculate optimal number of data files based on ExpectedDatabaseSize
-    5. Validate sufficient disk space on data and log drives
-    6. Check if database already exists
+    5. Validate sufficient disk space on data and log drives (EXIT EARLY if insufficient)
+    6. Create necessary directories
     7. Create database with specified files
     8. Set database owner to 'sa'
     9. Enable Query Store (SQL Server 2016+)
@@ -71,6 +73,13 @@ param(
     [Parameter(Mandatory = $true, HelpMessage = "Expected size of the database (e.g., '50GB')")]
     [ValidatePattern('^\d+(MB|GB|TB)$')]
     [string]$ExpectedDatabaseSize,
+    
+    [Parameter(Mandatory = $true, HelpMessage = "Environment pillar (DEV, UAC, PROD)")]
+    [ValidateSet('DEV', 'UAC', 'PROD')]
+    [string]$Pillar,
+    
+    [Parameter(Mandatory = $true, HelpMessage = "Data group identifier")]
+    [string]$Datagroup,
     
     [Parameter(Mandatory = $false, HelpMessage = "Optional path to configuration file for additional settings")]
     [ValidateScript({
@@ -93,9 +102,9 @@ try {
     }
     Import-Module dbatools -ErrorAction Stop -DisableNameChecking
     
-    $modulePath = Join-Path $PSScriptRoot "DatabaseUtils.psm1"
+    $modulePath = Join-Path $PSScriptRoot "pod_sql_databaseutils.psm1"
     if (-not (Test-Path $modulePath)) {
-        throw "DatabaseUtils module not found at: $modulePath"
+        throw "pod_sql_databaseutils module not found at: $modulePath"
     }
     Import-Module $modulePath -ErrorAction Stop -Force
     
@@ -122,8 +131,6 @@ try {
                 LogGrowth = "100MB"
                 FileSizeThreshold = "10GB"
             }
-            Logins = @()
-            Users = @()
             EnableEventLog = $true
             EventLogSource = "SQLDatabaseScripts"
         }
@@ -145,6 +152,7 @@ try {
     Write-Log -Message "Starting database creation process" -Level Info -LogFile $logFile -EnableEventLog $enableEventLog -EventLogSource $eventLogSource
     Write-Log -Message "Target SQL Instance: $SqlInstance, Database: $Database_Name" -Level Info -LogFile $logFile -EnableEventLog $false
     Write-Log -Message "Expected Database Size: $ExpectedDatabaseSize" -Level Info -LogFile $logFile -EnableEventLog $false
+    Write-Log -Message "Pillar: $Pillar, Datagroup: $Datagroup" -Level Info -LogFile $logFile -EnableEventLog $false
     Write-Log -Message "Event Log integration: $(if ($enableEventLog) { 'Enabled' } else { 'Disabled' })" -Level Info -LogFile $logFile -EnableEventLog $false
 
     # Validate SQL connection
@@ -156,6 +164,15 @@ try {
     $server = Connect-DbaInstance @connectParams
     Write-Log -Message "Successfully connected to SQL instance: $SqlInstance" -Level Success -LogFile $logFile -EnableEventLog $enableEventLog -EventLogSource $eventLogSource
     Write-Log -Message "SQL Server version: $($server.VersionString), Edition: $($server.Edition), Instance: $($server.InstanceName)" -Level Info -LogFile $logFile -EnableEventLog $false
+    
+    # EARLY EXIT CHECK 1: Check if database already exists (exit early to avoid unnecessary work)
+    Write-Log -Message "Checking if database '$Database_Name' already exists..." -Level Info -LogFile $logFile -EnableEventLog $false
+    $existingDb = Get-DbaDatabase -SqlInstance $SqlInstance -Database $Database_Name
+    if ($existingDb) {
+        Write-Log -Message "Database '$Database_Name' already exists. Exiting early." -Level Warning -LogFile $logFile -EnableEventLog $enableEventLog -EventLogSource $eventLogSource
+        return $Database_Name
+    }
+    Write-Log -Message "Database '$Database_Name' does not exist. Proceeding with validation..." -Level Info -LogFile $logFile -EnableEventLog $false
     
     # Derive data and log drives from instance default paths
     Write-Log -Message "Retrieving instance default paths..." -Level Info -LogFile $logFile -EnableEventLog $false
@@ -180,109 +197,21 @@ try {
     Write-Log -Message "Instance default data path: $dataDrivePath (Drive: $dataDrive)" -Level Info -LogFile $logFile -EnableEventLog $false
     Write-Log -Message "Instance default log path: $logDrivePath (Drive: $logDrive)" -Level Info -LogFile $logFile -EnableEventLog $false
 
-    # Create SQL Server logins if specified in configuration
-    $successfulLoginCount = 0
-    if ($config.Logins -and $config.Logins.Count -gt 0) {
-        Write-Log -Message "Processing SQL Server login creation..." -Level Info -LogFile $logFile -EnableEventLog $false
-        
-        foreach ($loginConfig in $config.Logins) {
-            try {
-                # Validate LoginType value before proceeding
-                if ($loginConfig.LoginType -eq "WindowsUser") {
-                    $errorMsg = "BREAKING CHANGE: LoginType 'WindowsUser' has been renamed to 'WindowsLogin' for consistency. Please update your configuration file: LoginType = 'WindowsLogin'"
-                    Write-Log -Message $errorMsg -Level Error -LogFile $logFile -EnableEventLog $enableEventLog -EventLogSource $eventLogSource
-                    Write-Error $errorMsg
-                    continue
-                }
-                
-                if ($loginConfig.LoginType -notin @("SqlLogin", "WindowsLogin")) {
-                    $errorMsg = "Invalid LoginType '$($loginConfig.LoginType)' for login '$($loginConfig.LoginName)'. Valid values are: 'SqlLogin' or 'WindowsLogin'"
-                    Write-Log -Message $errorMsg -Level Error -LogFile $logFile -EnableEventLog $enableEventLog -EventLogSource $eventLogSource
-                    Write-Error $errorMsg
-                    continue
-                }
-                
-                $loginParams = @{
-                    SqlInstance = $SqlInstance
-                    LoginName = $loginConfig.LoginName
-                    LoginType = $loginConfig.LoginType
-                    LogFile = $logFile
-                    EnableEventLog = $enableEventLog
-                    EventLogSource = $eventLogSource
-                }
-                
-                # Add SQL Auth password if specified
-                if ($loginConfig.LoginType -eq "SqlLogin") {
-                    if ($loginConfig.Password) {
-                        # Password should be a SecureString
-                        if ($loginConfig.Password -is [SecureString]) {
-                            $loginParams.Password = $loginConfig.Password
-                        }
-                        elseif ($loginConfig.Password -is [string]) {
-                            # Convert plain text to SecureString (for backward compatibility)
-                            $loginParams.Password = ConvertTo-SecureString $loginConfig.Password -AsPlainText -Force
-                        }
-                    }
-                    else {
-                        Write-Log -Message "Warning: SQL Login '$($loginConfig.LoginName)' requires a password. Skipping creation." -Level Warning -LogFile $logFile -EnableEventLog $enableEventLog -EventLogSource $eventLogSource
-                        continue
-                    }
-                }
-                
-                # Add optional parameters if specified
-                if ($loginConfig.ServerRoles) {
-                    $loginParams.ServerRoles = $loginConfig.ServerRoles
-                }
-                if ($loginConfig.DisablePasswordPolicy) {
-                    $loginParams.DisablePasswordPolicy = $true
-                }
-                if ($loginConfig.MustChangePassword) {
-                    $loginParams.MustChangePassword = $true
-                }
-                
-                $result = Add-SqlServerLogin @loginParams
-                
-                if ($result) {
-                    $successfulLoginCount++
-                }
-                else {
-                    Write-Log -Message "Warning: Failed to create login '$($loginConfig.LoginName)'. See previous error messages." -Level Warning -LogFile $logFile -EnableEventLog $enableEventLog -EventLogSource $eventLogSource
-                }
-            }
-            catch {
-                Write-Log -Message "Warning: Exception during login creation for '$($loginConfig.LoginName)': $($_.Exception.Message)" -Level Warning -LogFile $logFile -EnableEventLog $enableEventLog -EventLogSource $eventLogSource
-            }
-        }
-        
-        Write-Log -Message "SQL Server login creation processing completed: $successfulLoginCount of $($config.Logins.Count) logins created successfully" -Level Info -LogFile $logFile -EnableEventLog $false
-    }
-    else {
-        Write-Log -Message "No SQL Server logins configured for creation" -Level Info -LogFile $logFile -EnableEventLog $false
-    }
-
-    # Initialize directories
-    Initialize-Directories -DataDrive $dataDrive `
-                          -LogDrive $logDrive `
-                          -ServerInstanceName $server.InstanceName `
-                          -LogFile $logFile `
-                          -EnableEventLog $enableEventLog `
-                          -EventLogSource $eventLogSource
-
-    # Determine number of data files
+    # Determine number of data files (needed for disk space validation)
     Write-Log -Message "Calculating optimal number of data files based on expected database size..." -Level Info -LogFile $logFile -EnableEventLog $false
     $numberOfDataFiles = Calculate-OptimalDataFiles `
         -ExpectedDatabaseSize $ExpectedDatabaseSize `
         -FileSizeThreshold $config.FileSizes.FileSizeThreshold
     Write-Log -Message "Calculated optimal number of data files: $numberOfDataFiles (based on expected size: $ExpectedDatabaseSize, threshold: $($config.FileSizes.FileSizeThreshold))" -Level Info -LogFile $logFile -EnableEventLog $enableEventLog -EventLogSource $eventLogSource
     
-    # Calculate per-file size based on ExpectedDatabaseSize
+    # Calculate per-file size based on ExpectedDatabaseSize (needed for disk space validation)
     $expectedSizeMB = Convert-SizeToInt -SizeString $ExpectedDatabaseSize
     $perFileSizeMB = [int][Math]::Ceiling($expectedSizeMB / $numberOfDataFiles)
     $perFileSizeString = "${perFileSizeMB}MB"
     Write-Log -Message "Calculated per-file size: $perFileSizeString (total expected: $ExpectedDatabaseSize / $numberOfDataFiles files)" -Level Info -LogFile $logFile -EnableEventLog $enableEventLog -EventLogSource $eventLogSource
     Write-Log -Message "File configuration: DataSize=$perFileSizeString, LogSize=$($config.FileSizes.LogSize), DataGrowth=$($config.FileSizes.DataGrowth), LogGrowth=$($config.FileSizes.LogGrowth)" -Level Info -LogFile $logFile -EnableEventLog $false
 
-    # Validate sufficient disk space
+    # EARLY EXIT CHECK 2: Validate sufficient disk space (exit early if not enough space)
     Write-Log -Message "Validating disk space availability on data drive ${dataDrive}:\ and log drive ${logDrive}:\..." -Level Info -LogFile $logFile -EnableEventLog $false
     $hasSufficientSpace = Test-DbaSufficientDiskSpace `
         -SqlInstance $SqlInstance `
@@ -294,20 +223,19 @@ try {
         -SafetyMarginPercent 10
     
     if (-not $hasSufficientSpace) {
-        $errorMsg = "Disk space validation failed. Please free up space on the drives or reduce database file sizes."
+        $errorMsg = "Disk space validation failed. Exiting early. Please free up space on the drives or reduce database file sizes."
         Write-Log -Message $errorMsg -Level Error -LogFile $logFile -EnableEventLog $enableEventLog -EventLogSource $eventLogSource
         throw $errorMsg
     }
     Write-Log -Message "Disk space validation passed - sufficient space available on all required drives" -Level Success -LogFile $logFile -EnableEventLog $enableEventLog -EventLogSource $eventLogSource
 
-    # Check if database already exists
-    Write-Log -Message "Checking if database '$Database_Name' already exists..." -Level Info -LogFile $logFile -EnableEventLog $false
-    $existingDb = Get-DbaDatabase -SqlInstance $SqlInstance -Database $Database_Name
-    if ($existingDb) {
-        Write-Log -Message "Database '$Database_Name' already exists. Skipping creation." -Level Warning -LogFile $logFile -EnableEventLog $enableEventLog -EventLogSource $eventLogSource
-        return $Database_Name
-    }
-    Write-Log -Message "Database '$Database_Name' does not exist. Proceeding with creation..." -Level Info -LogFile $logFile -EnableEventLog $false
+    # Initialize directories (only after all early exit checks have passed)
+    Initialize-Directories -DataDrive $dataDrive `
+                          -LogDrive $logDrive `
+                          -ServerInstanceName $server.InstanceName `
+                          -LogFile $logFile `
+                          -EnableEventLog $enableEventLog `
+                          -EventLogSource $eventLogSource
 
     # Create database
     if ($PSCmdlet.ShouldProcess("$Database_Name", "Create database")) {
@@ -416,60 +344,13 @@ try {
                 Write-Log -Message "Query Store not available on SQL Server version $($server.VersionMajor) (requires version 13+)" -Level Info -LogFile $logFile -EnableEventLog $false
             }
             
-            # Create database users if specified in configuration
-            $successfulUserCount = 0
-            if ($config.Users -and $config.Users.Count -gt 0) {
-                Write-Log -Message "Processing database user creation..." -Level Info -LogFile $logFile -EnableEventLog $false
-                
-                foreach ($userConfig in $config.Users) {
-                    try {
-                        $userParams = @{
-                            SqlInstance = $SqlInstance
-                            Database = $Database_Name
-                            LoginName = $userConfig.LoginName
-                            LogFile = $logFile
-                            EnableEventLog = $enableEventLog
-                            EventLogSource = $eventLogSource
-                        }
-                        
-                        # Add optional parameters if specified
-                        if ($userConfig.UserName) {
-                            $userParams.UserName = $userConfig.UserName
-                        }
-                        if ($userConfig.DatabaseRoles) {
-                            $userParams.DatabaseRoles = $userConfig.DatabaseRoles
-                        }
-                        if ($userConfig.DefaultSchema) {
-                            $userParams.DefaultSchema = $userConfig.DefaultSchema
-                        }
-                        
-                        $result = Add-DatabaseUser @userParams
-                        
-                        if ($result) {
-                            $successfulUserCount++
-                        }
-                        else {
-                            Write-Log -Message "Warning: Failed to create user '$($userConfig.LoginName)'. See previous error messages." -Level Warning -LogFile $logFile -EnableEventLog $enableEventLog -EventLogSource $eventLogSource
-                        }
-                    }
-                    catch {
-                        Write-Log -Message "Warning: Exception during user creation for '$($userConfig.LoginName)': $($_.Exception.Message)" -Level Warning -LogFile $logFile -EnableEventLog $enableEventLog -EventLogSource $eventLogSource
-                    }
-                }
-                
-                Write-Log -Message "Database user creation processing completed: $successfulUserCount of $($config.Users.Count) users created successfully" -Level Info -LogFile $logFile -EnableEventLog $false
-            }
-            else {
-                Write-Log -Message "No database users configured for creation" -Level Info -LogFile $logFile -EnableEventLog $false
-            }
-            
             Write-Log -Message "Database '$Database_Name' configuration summary:" -Level Info -LogFile $logFile -EnableEventLog $false
             Write-Log -Message "  - Total data files in PRIMARY filegroup: $numberOfDataFiles" -Level Info -LogFile $logFile -EnableEventLog $false
             Write-Log -Message "  - Data file location: $dataDirectory" -Level Info -LogFile $logFile -EnableEventLog $false
             Write-Log -Message "  - Log file location: $logDirectory" -Level Info -LogFile $logFile -EnableEventLog $false
             Write-Log -Message "  - Owner: sa" -Level Info -LogFile $logFile -EnableEventLog $false
             Write-Log -Message "  - Query Store: $(if ($server.VersionMajor -ge 13) { 'Enabled' } else { 'Not Available' })" -Level Info -LogFile $logFile -EnableEventLog $false
-            Write-Log -Message "  - Database Users: $(if ($successfulUserCount -gt 0) { "$successfulUserCount created successfully" } elseif ($config.Users -and $config.Users.Count -gt 0) { "0 created (all failed)" } else { 'None configured' })" -Level Info -LogFile $logFile -EnableEventLog $false
+            Write-Log -Message "  - Pillar: $Pillar, Datagroup: $Datagroup" -Level Info -LogFile $logFile -EnableEventLog $false
         }
         catch {
             Write-Log -Message "Failed to create database: $($_.Exception.Message)" -Level Error -LogFile $logFile -EnableEventLog $enableEventLog -EventLogSource $eventLogSource
@@ -478,9 +359,6 @@ try {
     }
     else {
         Write-Log -Message "[WHATIF] Would create database: $Database_Name" -Level Info -LogFile $logFile -EnableEventLog $false
-        if ($config.Users -and $config.Users.Count -gt 0) {
-            Write-Log -Message "[WHATIF] Would create $($config.Users.Count) database user(s)" -Level Info -LogFile $logFile -EnableEventLog $false
-        }
     }
 
     Write-Log -Message "Database creation completed successfully!" -Level Success -LogFile $logFile -EnableEventLog $enableEventLog -EventLogSource $eventLogSource
