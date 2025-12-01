@@ -58,6 +58,11 @@
     7. Create database with specified files
     8. Set database owner to 'sa'
     9. Enable Query Store (SQL Server 2016+)
+    10. Create logins and database users based on Pillar:
+        - DEV: 1005_GS_{Datagroup}0_DEV_RW, 1005_GS_{Datagroup}0_FNC_RW, 
+               1005_GS_{Datagroup}0_PRS_RO, 1005_GS_{Datagroup}0_PRS_RW (with db_owner role)
+        - UAC/PROD: 0005_GS_{Datagroup}0_FNC_RW, 0005_GS_{Datagroup}0_PRS_RO, 
+                    0005_GS_{Datagroup}0_PRS_RW
 
 .LINK
     https://github.com/karim-attaleb/sqlserver-databasescripts
@@ -344,6 +349,73 @@ try {
                 Write-Log -Message "Query Store not available on SQL Server version $($server.VersionMajor) (requires version 13+)" -Level Info -LogFile $logFile -EnableEventLog $false
             }
             
+            # Create logins and users based on Pillar
+            Write-Log -Message "Creating logins and users based on Pillar '$Pillar' and Datagroup '$Datagroup'..." -Level Info -LogFile $logFile -EnableEventLog $false
+            
+            # Determine login names based on Pillar
+            if ($Pillar -eq 'DEV') {
+                $loginNames = @(
+                    "1005_GS_${Datagroup}0_DEV_RW",
+                    "1005_GS_${Datagroup}0_FNC_RW",
+                    "1005_GS_${Datagroup}0_PRS_RO",
+                    "1005_GS_${Datagroup}0_PRS_RW"
+                )
+            }
+            else {
+                # UAC or PROD
+                $loginNames = @(
+                    "0005_GS_${Datagroup}0_FNC_RW",
+                    "0005_GS_${Datagroup}0_PRS_RO",
+                    "0005_GS_${Datagroup}0_PRS_RW"
+                )
+            }
+            
+            Write-Log -Message "Login names to create: $($loginNames -join ', ')" -Level Info -LogFile $logFile -EnableEventLog $false
+            
+            # Create logins and map as users
+            foreach ($loginName in $loginNames) {
+                if ($PSCmdlet.ShouldProcess("$loginName", "Create login and database user")) {
+                    try {
+                        # Check if login already exists
+                        $existingLogin = Get-DbaLogin -SqlInstance $SqlInstance -Login $loginName -ErrorAction SilentlyContinue
+                        if (-not $existingLogin) {
+                            # Create Windows login (assuming these are Windows/AD groups)
+                            New-DbaLogin -SqlInstance $SqlInstance -Login $loginName -LoginType WindowsGroup -ErrorAction Stop
+                            Write-Log -Message "Created login: $loginName" -Level Info -LogFile $logFile -EnableEventLog $false
+                        }
+                        else {
+                            Write-Log -Message "Login '$loginName' already exists, skipping creation" -Level Info -LogFile $logFile -EnableEventLog $false
+                        }
+                        
+                        # Check if user already exists in database
+                        $existingUser = Get-DbaDbUser -SqlInstance $SqlInstance -Database $Database_Name -User $loginName -ErrorAction SilentlyContinue
+                        if (-not $existingUser) {
+                            # Create database user mapped to login
+                            New-DbaDbUser -SqlInstance $SqlInstance -Database $Database_Name -Login $loginName -Username $loginName -ErrorAction Stop
+                            Write-Log -Message "Created database user: $loginName in database $Database_Name" -Level Info -LogFile $logFile -EnableEventLog $false
+                        }
+                        else {
+                            Write-Log -Message "User '$loginName' already exists in database, skipping creation" -Level Info -LogFile $logFile -EnableEventLog $false
+                        }
+                        
+                        # If Pillar is DEV, add user to db_owner role
+                        if ($Pillar -eq 'DEV') {
+                            Add-DbaDbRoleMember -SqlInstance $SqlInstance -Database $Database_Name -Role 'db_owner' -User $loginName -ErrorAction Stop
+                            Write-Log -Message "Added user '$loginName' to db_owner role" -Level Info -LogFile $logFile -EnableEventLog $false
+                        }
+                    }
+                    catch {
+                        Write-Log -Message "Failed to create login/user '$loginName': $($_.Exception.Message)" -Level Warning -LogFile $logFile -EnableEventLog $enableEventLog -EventLogSource $eventLogSource
+                        # Continue with other logins even if one fails
+                    }
+                }
+                else {
+                    Write-Log -Message "[WHATIF] Would create login and user: $loginName" -Level Info -LogFile $logFile -EnableEventLog $false
+                }
+            }
+            
+            Write-Log -Message "Completed login and user creation for Pillar '$Pillar'" -Level Success -LogFile $logFile -EnableEventLog $enableEventLog -EventLogSource $eventLogSource
+            
             Write-Log -Message "Database '$Database_Name' configuration summary:" -Level Info -LogFile $logFile -EnableEventLog $false
             Write-Log -Message "  - Total data files in PRIMARY filegroup: $numberOfDataFiles" -Level Info -LogFile $logFile -EnableEventLog $false
             Write-Log -Message "  - Data file location: $dataDirectory" -Level Info -LogFile $logFile -EnableEventLog $false
@@ -351,6 +423,8 @@ try {
             Write-Log -Message "  - Owner: sa" -Level Info -LogFile $logFile -EnableEventLog $false
             Write-Log -Message "  - Query Store: $(if ($server.VersionMajor -ge 13) { 'Enabled' } else { 'Not Available' })" -Level Info -LogFile $logFile -EnableEventLog $false
             Write-Log -Message "  - Pillar: $Pillar, Datagroup: $Datagroup" -Level Info -LogFile $logFile -EnableEventLog $false
+            Write-Log -Message "  - Logins/Users created: $($loginNames -join ', ')" -Level Info -LogFile $logFile -EnableEventLog $false
+            Write-Log -Message "  - Database role: $(if ($Pillar -eq 'DEV') { 'db_owner' } else { 'None (default)' })" -Level Info -LogFile $logFile -EnableEventLog $false
         }
         catch {
             Write-Log -Message "Failed to create database: $($_.Exception.Message)" -Level Error -LogFile $logFile -EnableEventLog $enableEventLog -EventLogSource $eventLogSource
