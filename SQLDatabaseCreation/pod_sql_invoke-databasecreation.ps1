@@ -59,8 +59,8 @@
     8. Set database owner to 'sa'
     9. Enable Query Store (SQL Server 2016+)
     10. Create logins and database users based on Pillar:
-        - DEV: 1005_GS_{Datagroup}0_DEV_RW, 1005_GS_{Datagroup}0_FNC_RW, 
-               1005_GS_{Datagroup}0_PRS_RO, 1005_GS_{Datagroup}0_PRS_RW (with db_owner role)
+        - DEV: 1005_GS_{Datagroup}0_DEV_RW (with db_owner role), 1005_GS_{Datagroup}0_FNC_RW, 
+               1005_GS_{Datagroup}0_PRS_RO, 1005_GS_{Datagroup}0_PRS_RW
         - UAC/PROD: 0005_GS_{Datagroup}0_FNC_RW, 0005_GS_{Datagroup}0_PRS_RO, 
                     0005_GS_{Datagroup}0_PRS_RW
 
@@ -398,8 +398,8 @@ try {
                             Write-Log -Message "User '$loginName' already exists in database, skipping creation" -Level Info -LogFile $logFile -EnableEventLog $false
                         }
                         
-                        # If Pillar is DEV, add user to db_owner role
-                        if ($Pillar -eq 'DEV') {
+                        # If Pillar is DEV and this is the DEV_RW login, add user to db_owner role
+                        if ($Pillar -eq 'DEV' -and $loginName -like '*_DEV_RW') {
                             Add-DbaDbRoleMember -SqlInstance $SqlInstance -Database $Database_Name -Role 'db_owner' -User $loginName -ErrorAction Stop
                             Write-Log -Message "Added user '$loginName' to db_owner role" -Level Info -LogFile $logFile -EnableEventLog $false
                         }
@@ -424,7 +424,7 @@ try {
             Write-Log -Message "  - Query Store: $(if ($server.VersionMajor -ge 13) { 'Enabled' } else { 'Not Available' })" -Level Info -LogFile $logFile -EnableEventLog $false
             Write-Log -Message "  - Pillar: $Pillar, Datagroup: $Datagroup" -Level Info -LogFile $logFile -EnableEventLog $false
             Write-Log -Message "  - Logins/Users created: $($loginNames -join ', ')" -Level Info -LogFile $logFile -EnableEventLog $false
-            Write-Log -Message "  - Database role: $(if ($Pillar -eq 'DEV') { 'db_owner' } else { 'None (default)' })" -Level Info -LogFile $logFile -EnableEventLog $false
+            Write-Log -Message "  - Database role: $(if ($Pillar -eq 'DEV') { 'db_owner (DEV_RW only)' } else { 'None (default)' })" -Level Info -LogFile $logFile -EnableEventLog $false
         }
         catch {
             Write-Log -Message "Failed to create database: $($_.Exception.Message)" -Level Error -LogFile $logFile -EnableEventLog $enableEventLog -EventLogSource $eventLogSource
