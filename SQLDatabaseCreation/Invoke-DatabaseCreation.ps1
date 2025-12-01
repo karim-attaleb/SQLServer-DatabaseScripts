@@ -365,19 +365,16 @@ try {
                     $logicalFileName = "${Database_Name}_Data$i"
                     $physicalFileName = "$dataDirectory\${Database_Name}_Data$i.ndf"
                     
-                    $addFileSql = @"
-ALTER DATABASE [$Database_Name]
-ADD FILE (
-    NAME = N'$logicalFileName',
-    FILENAME = N'$physicalFileName',
-    SIZE = ${perFileSizeMB}MB,
-    FILEGROWTH = ${dataGrowthMB}MB
-) TO FILEGROUP [PRIMARY]
-"@
-                    
                     if ($PSCmdlet.ShouldProcess("$Database_Name", "Add data file $i to PRIMARY filegroup")) {
                         try {
-                            Invoke-DbaQuery -SqlInstance $SqlInstance -Database $Database_Name -Query $addFileSql -ErrorAction Stop
+                            Add-DbaDbFile -SqlInstance $SqlInstance `
+                                -Database $Database_Name `
+                                -FileGroup "PRIMARY" `
+                                -FileName $logicalFileName `
+                                -Path $physicalFileName `
+                                -Size $perFileSizeMB `
+                                -Growth $dataGrowthMB `
+                                -ErrorAction Stop
                             Write-Log -Message "Added data file $i ($logicalFileName) to PRIMARY filegroup" -Level Info -LogFile $logFile -EnableEventLog $false
                         }
                         catch {
