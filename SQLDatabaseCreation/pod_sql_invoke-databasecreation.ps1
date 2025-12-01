@@ -25,6 +25,9 @@
 .PARAMETER Datagroup
     The data group identifier.
 
+.PARAMETER Collation
+    The database collation. Default is 'Latin1_General_CI_AS'.
+
 .PARAMETER ConfigPath
     Optional path to a PowerShell data file (.psd1) containing additional configuration.
     If provided, FileSizes and Logging settings will be loaded from the config file.
@@ -85,6 +88,9 @@ param(
     
     [Parameter(Mandatory = $true, HelpMessage = "Data group identifier")]
     [string]$Datagroup,
+    
+    [Parameter(Mandatory = $false, HelpMessage = "Database collation")]
+    [string]$Collation = 'Latin1_General_CI_AS',
     
     [Parameter(Mandatory = $false, HelpMessage = "Optional path to configuration file for additional settings")]
     [ValidateScript({
@@ -255,6 +261,7 @@ try {
         Write-Log -Message "  - Log file size: $($config.FileSizes.LogSize)" -Level Info -LogFile $logFile -EnableEventLog $false
         Write-Log -Message "  - Data file growth: $($config.FileSizes.DataGrowth)" -Level Info -LogFile $logFile -EnableEventLog $false
         Write-Log -Message "  - Log file growth: $($config.FileSizes.LogGrowth)" -Level Info -LogFile $logFile -EnableEventLog $false
+        Write-Log -Message "  - Collation: $Collation" -Level Info -LogFile $logFile -EnableEventLog $false
 
         $newDbParams = @{
             SqlInstance = $SqlInstance
@@ -265,6 +272,7 @@ try {
             LogSize = (Convert-SizeToInt $config.FileSizes.LogSize)
             PrimaryFileGrowth = (Convert-SizeToInt $config.FileSizes.DataGrowth)
             LogGrowth = (Convert-SizeToInt $config.FileSizes.LogGrowth)
+            Collation = $Collation
         }
 
         try {
@@ -421,6 +429,7 @@ try {
             Write-Log -Message "  - Data file location: $dataDirectory" -Level Info -LogFile $logFile -EnableEventLog $false
             Write-Log -Message "  - Log file location: $logDirectory" -Level Info -LogFile $logFile -EnableEventLog $false
             Write-Log -Message "  - Owner: sa" -Level Info -LogFile $logFile -EnableEventLog $false
+            Write-Log -Message "  - Collation: $Collation" -Level Info -LogFile $logFile -EnableEventLog $false
             Write-Log -Message "  - Query Store: $(if ($server.VersionMajor -ge 13) { 'Enabled' } else { 'Not Available' })" -Level Info -LogFile $logFile -EnableEventLog $false
             Write-Log -Message "  - Pillar: $Pillar, Datagroup: $Datagroup" -Level Info -LogFile $logFile -EnableEventLog $false
             Write-Log -Message "  - Logins/Users created: $($loginNames -join ', ')" -Level Info -LogFile $logFile -EnableEventLog $false
