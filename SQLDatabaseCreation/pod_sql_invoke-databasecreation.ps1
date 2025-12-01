@@ -93,9 +93,9 @@ try {
     }
     Import-Module dbatools -ErrorAction Stop -DisableNameChecking
     
-    $modulePath = Join-Path $PSScriptRoot "DatabaseUtils.psm1"
+    $modulePath = Join-Path $PSScriptRoot "pod_sql_databaseutils.psm1"
     if (-not (Test-Path $modulePath)) {
-        throw "DatabaseUtils module not found at: $modulePath"
+        throw "pod_sql_databaseutils module not found at: $modulePath"
     }
     Import-Module $modulePath -ErrorAction Stop -Force
     
