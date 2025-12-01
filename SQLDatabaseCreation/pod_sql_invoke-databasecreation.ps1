@@ -25,6 +25,9 @@
 .PARAMETER Datagroup
     The data group identifier.
 
+.PARAMETER Collation
+    The database collation. Default is 'Latin1_General_CI_AS'.
+
 .PARAMETER ConfigPath
     Optional path to a PowerShell data file (.psd1) containing additional configuration.
     If provided, FileSizes and Logging settings will be loaded from the config file.
@@ -85,6 +88,9 @@ param(
     
     [Parameter(Mandatory = $true, HelpMessage = "Data group identifier")]
     [string]$Datagroup,
+    
+    [Parameter(Mandatory = $false, HelpMessage = "Database collation")]
+    [string]$Collation = 'Latin1_General_CI_AS',
     
     [Parameter(Mandatory = $false, HelpMessage = "Optional path to configuration file for additional settings")]
     [ValidateScript({
