@@ -62,10 +62,12 @@
     8. Set database owner to 'sa'
     9. Enable Query Store (SQL Server 2016+)
     10. Create logins and database users based on Pillar:
-        - DEV: 1005_GS_{Datagroup}0_DEV_RW (with db_owner role), 1005_GS_{Datagroup}0_FNC_RW, 
-               1005_GS_{Datagroup}0_PRS_RO, 1005_GS_{Datagroup}0_PRS_RW
-        - UAC/PROD: 0005_GS_{Datagroup}0_FNC_RW, 0005_GS_{Datagroup}0_PRS_RO, 
-                    0005_GS_{Datagroup}0_PRS_RW
+        - DEV: TD1001\1005_GS_{Datagroup}0_DEV_RW (with db_owner role), TD1001\1005_GS_{Datagroup}0_FNC_RW, 
+               TD1001\1005_GS_{Datagroup}0_PRS_RO, TD1001\1005_GS_{Datagroup}0_PRS_RW
+        - UAC: TD1001\0005_GS_{Datagroup}0_FNC_RW, TD1001\0005_GS_{Datagroup}0_PRS_RO, 
+               TD1001\0005_GS_{Datagroup}0_PRS_RW
+        - PROD: GLOW001\0005_GS_{Datagroup}0_FNC_RW, GLOW001\0005_GS_{Datagroup}0_PRS_RO, 
+                GLOW001\0005_GS_{Datagroup}0_PRS_RW
 
 .LINK
     https://github.com/karim-attaleb/sqlserver-databasescripts
@@ -360,21 +362,30 @@ try {
             # Create logins and users based on Pillar
             Write-Log -Message "Creating logins and users based on Pillar '$Pillar' and Datagroup '$Datagroup'..." -Level Info -LogFile $logFile -EnableEventLog $false
             
+            # Determine domain prefix based on Pillar
+            if ($Pillar -eq 'PROD') {
+                $domainPrefix = 'GLOW001\'
+            }
+            else {
+                # DEV or UAC
+                $domainPrefix = 'TD1001\'
+            }
+            
             # Determine login names based on Pillar
             if ($Pillar -eq 'DEV') {
                 $loginNames = @(
-                    "1005_GS_${Datagroup}0_DEV_RW",
-                    "1005_GS_${Datagroup}0_FNC_RW",
-                    "1005_GS_${Datagroup}0_PRS_RO",
-                    "1005_GS_${Datagroup}0_PRS_RW"
+                    "${domainPrefix}1005_GS_${Datagroup}0_DEV_RW",
+                    "${domainPrefix}1005_GS_${Datagroup}0_FNC_RW",
+                    "${domainPrefix}1005_GS_${Datagroup}0_PRS_RO",
+                    "${domainPrefix}1005_GS_${Datagroup}0_PRS_RW"
                 )
             }
             else {
                 # UAC or PROD
                 $loginNames = @(
-                    "0005_GS_${Datagroup}0_FNC_RW",
-                    "0005_GS_${Datagroup}0_PRS_RO",
-                    "0005_GS_${Datagroup}0_PRS_RW"
+                    "${domainPrefix}0005_GS_${Datagroup}0_FNC_RW",
+                    "${domainPrefix}0005_GS_${Datagroup}0_PRS_RO",
+                    "${domainPrefix}0005_GS_${Datagroup}0_PRS_RW"
                 )
             }
             
