@@ -50,11 +50,11 @@
 
     The script will:
     1. Validate SQL Server connection
-    2. Derive data and log drive paths from instance default paths
-    3. Create necessary directories
+    2. Check if database already exists (EXIT EARLY if exists)
+    3. Derive data and log drive paths from instance default paths
     4. Calculate optimal number of data files based on ExpectedDatabaseSize
-    5. Validate sufficient disk space on data and log drives
-    6. Check if database already exists
+    5. Validate sufficient disk space on data and log drives (EXIT EARLY if insufficient)
+    6. Create necessary directories
     7. Create database with specified files
     8. Set database owner to 'sa'
     9. Enable Query Store (SQL Server 2016+)
@@ -165,6 +165,15 @@ try {
     Write-Log -Message "Successfully connected to SQL instance: $SqlInstance" -Level Success -LogFile $logFile -EnableEventLog $enableEventLog -EventLogSource $eventLogSource
     Write-Log -Message "SQL Server version: $($server.VersionString), Edition: $($server.Edition), Instance: $($server.InstanceName)" -Level Info -LogFile $logFile -EnableEventLog $false
     
+    # EARLY EXIT CHECK 1: Check if database already exists (exit early to avoid unnecessary work)
+    Write-Log -Message "Checking if database '$Database_Name' already exists..." -Level Info -LogFile $logFile -EnableEventLog $false
+    $existingDb = Get-DbaDatabase -SqlInstance $SqlInstance -Database $Database_Name
+    if ($existingDb) {
+        Write-Log -Message "Database '$Database_Name' already exists. Exiting early." -Level Warning -LogFile $logFile -EnableEventLog $enableEventLog -EventLogSource $eventLogSource
+        return $Database_Name
+    }
+    Write-Log -Message "Database '$Database_Name' does not exist. Proceeding with validation..." -Level Info -LogFile $logFile -EnableEventLog $false
+    
     # Derive data and log drives from instance default paths
     Write-Log -Message "Retrieving instance default paths..." -Level Info -LogFile $logFile -EnableEventLog $false
     $defaultPaths = Get-DbaDefaultPath -SqlInstance $SqlInstance
@@ -188,29 +197,21 @@ try {
     Write-Log -Message "Instance default data path: $dataDrivePath (Drive: $dataDrive)" -Level Info -LogFile $logFile -EnableEventLog $false
     Write-Log -Message "Instance default log path: $logDrivePath (Drive: $logDrive)" -Level Info -LogFile $logFile -EnableEventLog $false
 
-    # Initialize directories
-    Initialize-Directories -DataDrive $dataDrive `
-                          -LogDrive $logDrive `
-                          -ServerInstanceName $server.InstanceName `
-                          -LogFile $logFile `
-                          -EnableEventLog $enableEventLog `
-                          -EventLogSource $eventLogSource
-
-    # Determine number of data files
+    # Determine number of data files (needed for disk space validation)
     Write-Log -Message "Calculating optimal number of data files based on expected database size..." -Level Info -LogFile $logFile -EnableEventLog $false
     $numberOfDataFiles = Calculate-OptimalDataFiles `
         -ExpectedDatabaseSize $ExpectedDatabaseSize `
         -FileSizeThreshold $config.FileSizes.FileSizeThreshold
     Write-Log -Message "Calculated optimal number of data files: $numberOfDataFiles (based on expected size: $ExpectedDatabaseSize, threshold: $($config.FileSizes.FileSizeThreshold))" -Level Info -LogFile $logFile -EnableEventLog $enableEventLog -EventLogSource $eventLogSource
     
-    # Calculate per-file size based on ExpectedDatabaseSize
+    # Calculate per-file size based on ExpectedDatabaseSize (needed for disk space validation)
     $expectedSizeMB = Convert-SizeToInt -SizeString $ExpectedDatabaseSize
     $perFileSizeMB = [int][Math]::Ceiling($expectedSizeMB / $numberOfDataFiles)
     $perFileSizeString = "${perFileSizeMB}MB"
     Write-Log -Message "Calculated per-file size: $perFileSizeString (total expected: $ExpectedDatabaseSize / $numberOfDataFiles files)" -Level Info -LogFile $logFile -EnableEventLog $enableEventLog -EventLogSource $eventLogSource
     Write-Log -Message "File configuration: DataSize=$perFileSizeString, LogSize=$($config.FileSizes.LogSize), DataGrowth=$($config.FileSizes.DataGrowth), LogGrowth=$($config.FileSizes.LogGrowth)" -Level Info -LogFile $logFile -EnableEventLog $false
 
-    # Validate sufficient disk space
+    # EARLY EXIT CHECK 2: Validate sufficient disk space (exit early if not enough space)
     Write-Log -Message "Validating disk space availability on data drive ${dataDrive}:\ and log drive ${logDrive}:\..." -Level Info -LogFile $logFile -EnableEventLog $false
     $hasSufficientSpace = Test-DbaSufficientDiskSpace `
         -SqlInstance $SqlInstance `
@@ -222,20 +223,19 @@ try {
         -SafetyMarginPercent 10
     
     if (-not $hasSufficientSpace) {
-        $errorMsg = "Disk space validation failed. Please free up space on the drives or reduce database file sizes."
+        $errorMsg = "Disk space validation failed. Exiting early. Please free up space on the drives or reduce database file sizes."
         Write-Log -Message $errorMsg -Level Error -LogFile $logFile -EnableEventLog $enableEventLog -EventLogSource $eventLogSource
         throw $errorMsg
     }
     Write-Log -Message "Disk space validation passed - sufficient space available on all required drives" -Level Success -LogFile $logFile -EnableEventLog $enableEventLog -EventLogSource $eventLogSource
 
-    # Check if database already exists
-    Write-Log -Message "Checking if database '$Database_Name' already exists..." -Level Info -LogFile $logFile -EnableEventLog $false
-    $existingDb = Get-DbaDatabase -SqlInstance $SqlInstance -Database $Database_Name
-    if ($existingDb) {
-        Write-Log -Message "Database '$Database_Name' already exists. Skipping creation." -Level Warning -LogFile $logFile -EnableEventLog $enableEventLog -EventLogSource $eventLogSource
-        return $Database_Name
-    }
-    Write-Log -Message "Database '$Database_Name' does not exist. Proceeding with creation..." -Level Info -LogFile $logFile -EnableEventLog $false
+    # Initialize directories (only after all early exit checks have passed)
+    Initialize-Directories -DataDrive $dataDrive `
+                          -LogDrive $logDrive `
+                          -ServerInstanceName $server.InstanceName `
+                          -LogFile $logFile `
+                          -EnableEventLog $enableEventLog `
+                          -EventLogSource $eventLogSource
 
     # Create database
     if ($PSCmdlet.ShouldProcess("$Database_Name", "Create database")) {
