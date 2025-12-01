@@ -387,8 +387,8 @@ try {
                         # Check if login already exists
                         $existingLogin = Get-DbaLogin -SqlInstance $SqlInstance -Login $loginName -ErrorAction SilentlyContinue
                         if (-not $existingLogin) {
-                            # Create Windows login (assuming these are Windows/AD groups)
-                            New-DbaLogin -SqlInstance $SqlInstance -Login $loginName -LoginType WindowsGroup -ErrorAction Stop
+                            # Create login
+                            New-DbaLogin -SqlInstance $SqlInstance -Login $loginName -ErrorAction Stop
                             Write-Log -Message "Created login: $loginName" -Level Info -LogFile $logFile -EnableEventLog $false
                         }
                         else {
