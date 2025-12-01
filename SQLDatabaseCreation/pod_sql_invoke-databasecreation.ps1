@@ -419,10 +419,7 @@ try {
                         
                         # If Pillar is DEV and this is the DEV_RW login, add user to db_owner role
                         if ($Pillar -eq 'DEV' -and $loginName -like '*_DEV_RW') {
-                            # Use direct T-SQL instead of Add-DbaDbRoleMember to avoid potential SMO/AD resolution hangs
-                            $escapedLoginName = $loginName -replace "'", "''"
-                            $roleQuery = "ALTER ROLE [db_owner] ADD MEMBER [$escapedLoginName];"
-                            Invoke-DbaQuery -SqlInstance $SqlInstance -Database $Database_Name -Query $roleQuery -ErrorAction Stop
+                            Add-DbaDbRoleMember -SqlInstance $SqlInstance -Database $Database_Name -Role 'db_owner' -User $loginName -ErrorAction Stop
                             Write-Log -Message "Added user '$loginName' to db_owner role" -Level Info -LogFile $logFile -EnableEventLog $false
                         }
                     }
