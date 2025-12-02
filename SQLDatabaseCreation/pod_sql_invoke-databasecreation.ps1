@@ -57,10 +57,10 @@
     8. Set database owner to 'sa'
     9. Enable Query Store (SQL Server 2016+)
     10. Create logins and database users based on Pillar:
-        - DEV: TD1001\1005_GS_{Datagroup}0_DEV_RW (with db_owner role), TD1001\1005_GS_{Datagroup}0_FNC_RW, 
-               TD1001\1005_GS_{Datagroup}0_PRS_RO, TD1001\1005_GS_{Datagroup}0_PRS_RW
-        - UAC: TD1001\0005_GS_{Datagroup}0_FNC_RW, TD1001\0005_GS_{Datagroup}0_PRS_RO, 
-               TD1001\0005_GS_{Datagroup}0_PRS_RW
+        - DEV: TDA001\1005_GS_{Datagroup}0_DEV_RW (with db_owner role), TDA001\1005_GS_{Datagroup}0_FNC_RW, 
+               TDA001\1005_GS_{Datagroup}0_PRS_RO, TDA001\1005_GS_{Datagroup}0_PRS_RW
+        - UAC: TDA001\0005_GS_{Datagroup}0_FNC_RW, TDA001\0005_GS_{Datagroup}0_PRS_RO, 
+               TDA001\0005_GS_{Datagroup}0_PRS_RW
         - PROD: GLOW001\0005_GS_{Datagroup}0_FNC_RW, GLOW001\0005_GS_{Datagroup}0_PRS_RO, 
                 GLOW001\0005_GS_{Datagroup}0_PRS_RW
 
@@ -300,7 +300,7 @@ try {
             }
             else {
                 # DEV or UAC
-                $domainPrefix = 'TD1001\'
+                $domainPrefix = 'TDA001\'
             }
             
             # Determine login names based on Pillar
@@ -322,6 +322,10 @@ try {
             }
             
             Write-Log -Message "Login names to create: $($loginNames -join ', ')" -Level Info -LogFile $logFile -EnableEventLog $false
+            
+            # Track successful and failed login/user creations
+            $successfulPrincipals = @()
+            $failedPrincipals = @()
             
             # Create logins and map as users
             foreach ($loginName in $loginNames) {
@@ -354,9 +358,14 @@ try {
                             Add-DbaDbRoleMember -SqlInstance $SqlInstance -Database $Database_Name -Role 'db_owner' -User $loginName -Confirm:$false -ErrorAction Stop
                             Write-Log -Message "Added user '$loginName' to db_owner role" -Level Info -LogFile $logFile -EnableEventLog $false
                         }
+                        
+                        # Track successful creation
+                        $successfulPrincipals += $loginName
                     }
                     catch {
                         Write-Log -Message "Failed to create login/user '$loginName': $($_.Exception.Message)" -Level Warning -LogFile $logFile -EnableEventLog $enableEventLog -EventLogSource $eventLogSource
+                        # Track failed creation
+                        $failedPrincipals += $loginName
                         # Continue with other logins even if one fails
                     }
                 }
@@ -365,7 +374,13 @@ try {
                 }
             }
             
-            Write-Log -Message "Completed login and user creation for Pillar '$Pillar'" -Level Success -LogFile $logFile -EnableEventLog $enableEventLog -EventLogSource $eventLogSource
+            # Log completion status based on success/failure
+            if ($failedPrincipals.Count -eq 0) {
+                Write-Log -Message "Completed login and user creation for Pillar '$Pillar'" -Level Success -LogFile $logFile -EnableEventLog $enableEventLog -EventLogSource $eventLogSource
+            }
+            else {
+                Write-Log -Message "Completed login and user creation for Pillar '$Pillar' with $($failedPrincipals.Count) failure(s)" -Level Warning -LogFile $logFile -EnableEventLog $enableEventLog -EventLogSource $eventLogSource
+            }
             
             Write-Log -Message "Database '$Database_Name' configuration summary:" -Level Info -LogFile $logFile -EnableEventLog $false
             Write-Log -Message "  - Total data files in PRIMARY filegroup: $numberOfDataFiles" -Level Info -LogFile $logFile -EnableEventLog $false
@@ -375,7 +390,15 @@ try {
             Write-Log -Message "  - Collation: $Collation" -Level Info -LogFile $logFile -EnableEventLog $false
             Write-Log -Message "  - Query Store: $(if ($server.VersionMajor -ge 13) { 'Enabled' } else { 'Not Available' })" -Level Info -LogFile $logFile -EnableEventLog $false
             Write-Log -Message "  - Pillar: $Pillar, Datagroup: $Datagroup" -Level Info -LogFile $logFile -EnableEventLog $false
-            Write-Log -Message "  - Logins/Users created: $($loginNames -join ', ')" -Level Info -LogFile $logFile -EnableEventLog $false
+            if ($successfulPrincipals.Count -gt 0) {
+                Write-Log -Message "  - Logins/Users created: $($successfulPrincipals -join ', ')" -Level Info -LogFile $logFile -EnableEventLog $false
+            }
+            else {
+                Write-Log -Message "  - Logins/Users created: None" -Level Info -LogFile $logFile -EnableEventLog $false
+            }
+            if ($failedPrincipals.Count -gt 0) {
+                Write-Log -Message "  - Logins/Users failed: $($failedPrincipals -join ', ')" -Level Warning -LogFile $logFile -EnableEventLog $false
+            }
             Write-Log -Message "  - Database role: $(if ($Pillar -eq 'DEV') { 'db_owner (DEV_RW only)' } else { 'None (default)' })" -Level Info -LogFile $logFile -EnableEventLog $false
         }
         catch {
