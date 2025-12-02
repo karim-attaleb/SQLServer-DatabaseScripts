@@ -28,11 +28,6 @@
 .PARAMETER Collation
     The database collation. Default is 'Latin1_General_CI_AS'.
 
-.PARAMETER ConfigPath
-    Optional path to a PowerShell data file (.psd1) containing additional configuration.
-    If provided, FileSizes and Logging settings will be loaded from the config file.
-    If not provided, default values will be used.
-
 .EXAMPLE
     .\pod_sql_invoke-databasecreation.ps1 -SqlInstance "localhost,1433" -Database_Name "MyDatabase" -ExpectedDatabaseSize "50GB" -Pillar "DEV" -Datagroup "DG01"
     Creates a database with the specified parameters using instance default paths.
@@ -92,19 +87,7 @@ param(
     [string]$Datagroup,
     
     [Parameter(Mandatory = $false, HelpMessage = "Database collation")]
-    [string]$Collation = 'Latin1_General_CI_AS',
-    
-    [Parameter(Mandatory = $false, HelpMessage = "Optional path to configuration file for additional settings")]
-    [ValidateScript({
-        if ($_ -and -not (Test-Path $_)) {
-            throw "Configuration file not found: $_"
-        }
-        if ($_ -and $_ -notmatch '\.psd1$') {
-            throw "Configuration file must be a PowerShell data file (.psd1)"
-        }
-        return $true
-    })]
-    [string]$ConfigPath
+    [string]$Collation = 'Latin1_General_CI_AS'
 )
 
 # Import required modules
@@ -128,39 +111,16 @@ catch {
     exit 1
 }
 
-# Load configuration from file if provided, otherwise use defaults
-try {
-    if ($ConfigPath) {
-        $config = Import-PowerShellDataFile -Path $ConfigPath -ErrorAction Stop
-        Write-Verbose "Configuration loaded from: $ConfigPath"
-    }
-    else {
-        # Use default configuration
-        $config = @{
-            FileSizes = @{
-                DataSize = "200MB"
-                DataGrowth = "100MB"
-                LogSize = "100MB"
-                LogGrowth = "100MB"
-                FileSizeThreshold = "10GB"
-            }
-            EnableEventLog = $true
-            EventLogSource = "SQLDatabaseScripts"
-        }
-        Write-Verbose "Using default configuration"
-    }
-    
-    # Set log file path (use config if available, otherwise default)
-    $logFile = if ($config.LogFile) { $config.LogFile } else { "$PSScriptRoot\DatabaseCreation.log" }
-}
-catch {
-    Write-Error "Failed to load configuration: $($_.Exception.Message)"
-    exit 1
-}
+# Default configuration values
+$dataGrowth = "100MB"
+$logSize = "100MB"
+$logGrowth = "100MB"
+$fileSizeThreshold = "10GB"
+$logFile = "$PSScriptRoot\DatabaseCreation.log"
+$enableEventLog = $true
+$eventLogSource = "SQLDatabaseScripts"
 
 try {
-    $enableEventLog = if ($config.EnableEventLog) { $config.EnableEventLog } else { $false }
-    $eventLogSource = if ($config.EventLogSource) { $config.EventLogSource } else { "SQLDatabaseScripts" }
     
     Write-Log -Message "Starting database creation process" -Level Info -LogFile $logFile -EnableEventLog $enableEventLog -EventLogSource $eventLogSource
     Write-Log -Message "Target SQL Instance: $SqlInstance, Database: $Database_Name" -Level Info -LogFile $logFile -EnableEventLog $false
@@ -214,15 +174,15 @@ try {
     Write-Log -Message "Calculating optimal number of data files based on expected database size..." -Level Info -LogFile $logFile -EnableEventLog $false
     $numberOfDataFiles = Calculate-OptimalDataFiles `
         -ExpectedDatabaseSize $ExpectedDatabaseSize `
-        -FileSizeThreshold $config.FileSizes.FileSizeThreshold
-    Write-Log -Message "Calculated optimal number of data files: $numberOfDataFiles (based on expected size: $ExpectedDatabaseSize, threshold: $($config.FileSizes.FileSizeThreshold))" -Level Info -LogFile $logFile -EnableEventLog $enableEventLog -EventLogSource $eventLogSource
+        -FileSizeThreshold $fileSizeThreshold
+    Write-Log -Message "Calculated optimal number of data files: $numberOfDataFiles (based on expected size: $ExpectedDatabaseSize, threshold: $fileSizeThreshold)" -Level Info -LogFile $logFile -EnableEventLog $enableEventLog -EventLogSource $eventLogSource
     
     # Calculate per-file size based on ExpectedDatabaseSize (needed for disk space validation)
     $expectedSizeMB = Convert-SizeToInt -SizeString $ExpectedDatabaseSize
     $perFileSizeMB = [int][Math]::Ceiling($expectedSizeMB / $numberOfDataFiles)
     $perFileSizeString = "${perFileSizeMB}MB"
     Write-Log -Message "Calculated per-file size: $perFileSizeString (total expected: $ExpectedDatabaseSize / $numberOfDataFiles files)" -Level Info -LogFile $logFile -EnableEventLog $enableEventLog -EventLogSource $eventLogSource
-    Write-Log -Message "File configuration: DataSize=$perFileSizeString, LogSize=$($config.FileSizes.LogSize), DataGrowth=$($config.FileSizes.DataGrowth), LogGrowth=$($config.FileSizes.LogGrowth)" -Level Info -LogFile $logFile -EnableEventLog $false
+    Write-Log -Message "File configuration: DataSize=$perFileSizeString, LogSize=$logSize, DataGrowth=$dataGrowth, LogGrowth=$logGrowth" -Level Info -LogFile $logFile -EnableEventLog $false
 
     # EARLY EXIT CHECK 2: Validate sufficient disk space (exit early if not enough space)
     Write-Log -Message "Validating disk space availability on data drive ${dataDrive}:\ and log drive ${logDrive}:\..." -Level Info -LogFile $logFile -EnableEventLog $false
@@ -232,7 +192,7 @@ try {
         -LogDrive $logDrive `
         -NumberOfDataFiles $numberOfDataFiles `
         -DataSize $perFileSizeString `
-        -LogSize $config.FileSizes.LogSize `
+        -LogSize $logSize `
         -SafetyMarginPercent 10
     
     if (-not $hasSufficientSpace) {
@@ -260,9 +220,9 @@ try {
         Write-Log -Message "  - Log directory: $logDirectory" -Level Info -LogFile $logFile -EnableEventLog $false
         Write-Log -Message "  - Number of data files (all in PRIMARY filegroup): $numberOfDataFiles" -Level Info -LogFile $logFile -EnableEventLog $false
         Write-Log -Message "  - Data file size: $perFileSizeString each (total: $ExpectedDatabaseSize)" -Level Info -LogFile $logFile -EnableEventLog $false
-        Write-Log -Message "  - Log file size: $($config.FileSizes.LogSize)" -Level Info -LogFile $logFile -EnableEventLog $false
-        Write-Log -Message "  - Data file growth: $($config.FileSizes.DataGrowth)" -Level Info -LogFile $logFile -EnableEventLog $false
-        Write-Log -Message "  - Log file growth: $($config.FileSizes.LogGrowth)" -Level Info -LogFile $logFile -EnableEventLog $false
+        Write-Log -Message "  - Log file size: $logSize" -Level Info -LogFile $logFile -EnableEventLog $false
+        Write-Log -Message "  - Data file growth: $dataGrowth" -Level Info -LogFile $logFile -EnableEventLog $false
+        Write-Log -Message "  - Log file growth: $logGrowth" -Level Info -LogFile $logFile -EnableEventLog $false
         Write-Log -Message "  - Collation: $Collation" -Level Info -LogFile $logFile -EnableEventLog $false
 
         $newDbParams = @{
@@ -271,9 +231,9 @@ try {
             DataFilePath = $dataDirectory
             LogFilePath = $logDirectory
             PrimaryFileSize = $perFileSizeMB
-            LogSize = (Convert-SizeToInt $config.FileSizes.LogSize)
-            PrimaryFileGrowth = (Convert-SizeToInt $config.FileSizes.DataGrowth)
-            LogGrowth = (Convert-SizeToInt $config.FileSizes.LogGrowth)
+            LogSize = (Convert-SizeToInt $logSize)
+            PrimaryFileGrowth = (Convert-SizeToInt $dataGrowth)
+            LogGrowth = (Convert-SizeToInt $logGrowth)
             Collation = $Collation
         }
         
@@ -281,7 +241,7 @@ try {
         if ($numberOfDataFiles -gt 1) {
             $newDbParams.SecondaryFileCount = $numberOfDataFiles - 1
             $newDbParams.SecondaryFilesize = $perFileSizeMB
-            $newDbParams.SecondaryFileGrowth = (Convert-SizeToInt $config.FileSizes.DataGrowth)
+            $newDbParams.SecondaryFileGrowth = (Convert-SizeToInt $dataGrowth)
         }
 
         try {
