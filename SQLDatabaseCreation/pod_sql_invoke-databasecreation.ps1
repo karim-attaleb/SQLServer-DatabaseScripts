@@ -276,9 +276,16 @@ try {
             LogGrowth = (Convert-SizeToInt $config.FileSizes.LogGrowth)
             Collation = $Collation
         }
+        
+        # Add secondary file parameters if more than one data file is needed
+        if ($numberOfDataFiles -gt 1) {
+            $newDbParams.SecondaryFileCount = $numberOfDataFiles - 1
+            $newDbParams.SecondaryFilesize = $perFileSizeMB
+            $newDbParams.SecondaryFileGrowth = (Convert-SizeToInt $config.FileSizes.DataGrowth)
+        }
 
         try {
-            Write-Log -Message "Creating database '$Database_Name'..." -Level Info -LogFile $logFile -EnableEventLog $false
+            Write-Log -Message "Creating database '$Database_Name' with $numberOfDataFiles data file(s)..." -Level Info -LogFile $logFile -EnableEventLog $false
             $newDb = New-DbaDatabase @newDbParams -ErrorAction Stop
             
             # Verify database was actually created
@@ -296,42 +303,7 @@ try {
                 throw $errorMsg
             }
             
-            Write-Log -Message "Successfully created database: $Database_Name with PRIMARY data file" -Level Success -LogFile $logFile -EnableEventLog $enableEventLog -EventLogSource $eventLogSource
-            
-            # Add additional files to PRIMARY filegroup if needed
-            if ($numberOfDataFiles -gt 1) {
-                Write-Log -Message "Adding $(($numberOfDataFiles - 1)) additional data file(s) to PRIMARY filegroup..." -Level Info -LogFile $logFile -EnableEventLog $false
-                
-                $dataGrowthMB = Convert-SizeToInt $config.FileSizes.DataGrowth
-                
-                for ($i = 2; $i -le $numberOfDataFiles; $i++) {
-                    $logicalFileName = "${Database_Name}_Data$i"
-                    $physicalFileName = "$dataDirectory\${Database_Name}_Data$i.ndf"
-                    
-                    if ($PSCmdlet.ShouldProcess("$Database_Name", "Add data file $i to PRIMARY filegroup")) {
-                        try {
-                            Add-DbaDbFile -SqlInstance $SqlInstance `
-                                -Database $Database_Name `
-                                -FileGroup "PRIMARY" `
-                                -FileName $logicalFileName `
-                                -Path $physicalFileName `
-                                -Size $perFileSizeMB `
-                                -Growth $dataGrowthMB `
-                                -ErrorAction Stop
-                            Write-Log -Message "Added data file $i ($logicalFileName) to PRIMARY filegroup" -Level Info -LogFile $logFile -EnableEventLog $false
-                        }
-                        catch {
-                            Write-Log -Message "Failed to add data file ${i}: $($_.Exception.Message)" -Level Error -LogFile $logFile -EnableEventLog $enableEventLog -EventLogSource $eventLogSource
-                            throw
-                        }
-                    }
-                    else {
-                        Write-Log -Message "[WHATIF] Would add data file $i ($logicalFileName) to PRIMARY filegroup" -Level Info -LogFile $logFile -EnableEventLog $false
-                    }
-                }
-                
-                Write-Log -Message "Successfully added $(($numberOfDataFiles - 1)) additional data file(s) to PRIMARY filegroup" -Level Success -LogFile $logFile -EnableEventLog $enableEventLog -EventLogSource $eventLogSource
-            }
+            Write-Log -Message "Successfully created database: $Database_Name with $numberOfDataFiles data file(s) in PRIMARY filegroup" -Level Success -LogFile $logFile -EnableEventLog $enableEventLog -EventLogSource $eventLogSource
 
             # Set database owner
             Write-Log -Message "Setting database owner to 'sa'..." -Level Info -LogFile $logFile -EnableEventLog $false
@@ -419,7 +391,7 @@ try {
                         
                         # If Pillar is DEV and this is the DEV_RW login, add user to db_owner role
                         if ($Pillar -eq 'DEV' -and $loginName -like '*_DEV_RW') {
-                            Add-DbaDbRoleMember -SqlInstance $SqlInstance -Database $Database_Name -Role 'db_owner' -User $loginName -ErrorAction Stop
+                            Add-DbaDbRoleMember -SqlInstance $SqlInstance -Database $Database_Name -Role 'db_owner' -User $loginName -Confirm:$false -ErrorAction Stop
                             Write-Log -Message "Added user '$loginName' to db_owner role" -Level Info -LogFile $logFile -EnableEventLog $false
                         }
                     }
