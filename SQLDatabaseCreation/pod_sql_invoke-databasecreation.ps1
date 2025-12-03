@@ -46,23 +46,36 @@
     - dbatools module
     - Appropriate SQL Server permissions
 
-    The script will:
+    The script is idempotent and follows these steps (exits on failure at each step):
+    
+    STEP 1: Create Database
     1. Validate SQL Server connection
-    2. Check if database already exists (EXIT EARLY if exists)
+    2. Check if database already exists (skip creation if exists)
     3. Derive data and log drive paths from instance default paths
     4. Calculate optimal number of data files based on ExpectedDatabaseSize
-    5. Validate sufficient disk space on data and log drives (EXIT EARLY if insufficient)
+    5. Validate sufficient disk space on data and log drives (EXIT if insufficient)
     6. Create necessary directories
     7. Create database with specified files
     8. Set database owner to 'sa'
     9. Enable Query Store (SQL Server 2016+)
-    10. Create logins and database users based on Pillar:
-        - DEV: TDA001\1005_GS_{Datagroup}0_DEV_RW (with db_owner role), TDA001\1005_GS_{Datagroup}0_FNC_RW, 
+    
+    STEP 2: Create Logins and Users (EXIT on failure)
+    Create logins and database users based on Pillar:
+        - DEV: TDA001\1005_GS_{Datagroup}0_DEV_RW, TDA001\1005_GS_{Datagroup}0_FNC_RW, 
                TDA001\1005_GS_{Datagroup}0_PRS_RO, TDA001\1005_GS_{Datagroup}0_PRS_RW
         - ACC: TDA001\0005_GS_{Datagroup}0_FNC_RW, TDA001\0005_GS_{Datagroup}0_PRS_RO, 
                TDA001\0005_GS_{Datagroup}0_PRS_RW
         - PROD: GLOW001\0005_GS_{Datagroup}0_FNC_RW, GLOW001\0005_GS_{Datagroup}0_PRS_RO, 
                 GLOW001\0005_GS_{Datagroup}0_PRS_RW
+    
+    STEP 3: Create db_executor Role (EXIT on failure)
+    Create the db_executor database role and grant EXECUTE permission
+    
+    STEP 4: Setup Security (EXIT on failure)
+    Assign database roles to users:
+        - DEV_RW (DEV pillar only): db_owner
+        - *_RO users: db_datareader
+        - *_RW users (FNC_RW, PRS_RW): db_datareader, db_datawriter, db_executor
 
 .LINK
     https://github.com/karim-attaleb/sqlserver-databasescripts
@@ -291,8 +304,10 @@ try {
                 Write-Log -Message "Query Store not available on SQL Server version $($server.VersionMajor) (requires version 13+)" -Level Info -LogFile $logFile -EnableEventLog $false
             }
             
-            # Create logins and users based on Pillar
-            Write-Log -Message "Creating logins and users based on Pillar '$Pillar' and Datagroup '$Datagroup'..." -Level Info -LogFile $logFile -EnableEventLog $false
+            # ============================================================
+            # STEP 2: Create Logins and Users (EXIT on failure)
+            # ============================================================
+            Write-Log -Message "STEP 2: Creating logins and users based on Pillar '$Pillar' and Datagroup '$Datagroup'..." -Level Info -LogFile $logFile -EnableEventLog $enableEventLog -EventLogSource $eventLogSource
             
             # Determine domain prefix based on Pillar
             if ($Pillar -eq 'PROD') {
@@ -323,50 +338,29 @@ try {
             
             Write-Log -Message "Login names to create: $($loginNames -join ', ')" -Level Info -LogFile $logFile -EnableEventLog $false
             
-            # Track successful and failed login/user creations
-            $successfulPrincipals = @()
-            $failedPrincipals = @()
-            
-            # Create logins and map as users
+            # Create logins and map as users (exit on failure)
             foreach ($loginName in $loginNames) {
                 if ($PSCmdlet.ShouldProcess("$loginName", "Create login and database user")) {
-                    try {
-                        # Check if login already exists
-                        $existingLogin = Get-DbaLogin -SqlInstance $SqlInstance -Login $loginName -ErrorAction SilentlyContinue
-                        if (-not $existingLogin) {
-                            # Create login
-                            New-DbaLogin -SqlInstance $SqlInstance -Login $loginName -ErrorAction Stop
-                            Write-Log -Message "Created login: $loginName" -Level Info -LogFile $logFile -EnableEventLog $false
-                        }
-                        else {
-                            Write-Log -Message "Login '$loginName' already exists, skipping creation" -Level Info -LogFile $logFile -EnableEventLog $false
-                        }
-                        
-                        # Check if user already exists in database
-                        $existingUser = Get-DbaDbUser -SqlInstance $SqlInstance -Database $Database_Name -User $loginName -ErrorAction SilentlyContinue
-                        if (-not $existingUser) {
-                            # Create database user mapped to login
-                            New-DbaDbUser -SqlInstance $SqlInstance -Database $Database_Name -Login $loginName -Username $loginName -ErrorAction Stop
-                            Write-Log -Message "Created database user: $loginName in database $Database_Name" -Level Info -LogFile $logFile -EnableEventLog $false
-                        }
-                        else {
-                            Write-Log -Message "User '$loginName' already exists in database, skipping creation" -Level Info -LogFile $logFile -EnableEventLog $false
-                        }
-                        
-                        # If Pillar is DEV and this is the DEV_RW login, add user to db_owner role
-                        if ($Pillar -eq 'DEV' -and $loginName -like '*_DEV_RW') {
-                            Add-DbaDbRoleMember -SqlInstance $SqlInstance -Database $Database_Name -Role 'db_owner' -Member $loginName -Confirm:$false -ErrorAction Stop
-                            Write-Log -Message "Added user '$loginName' to db_owner role" -Level Info -LogFile $logFile -EnableEventLog $false
-                        }
-                        
-                        # Track successful creation
-                        $successfulPrincipals += $loginName
+                    # Check if login already exists (idempotent)
+                    $existingLogin = Get-DbaLogin -SqlInstance $SqlInstance -Login $loginName -ErrorAction SilentlyContinue
+                    if (-not $existingLogin) {
+                        # Create login
+                        New-DbaLogin -SqlInstance $SqlInstance -Login $loginName -ErrorAction Stop
+                        Write-Log -Message "Created login: $loginName" -Level Info -LogFile $logFile -EnableEventLog $false
                     }
-                    catch {
-                        Write-Log -Message "Failed to create login/user '$loginName': $($_.Exception.Message)" -Level Warning -LogFile $logFile -EnableEventLog $enableEventLog -EventLogSource $eventLogSource
-                        # Track failed creation
-                        $failedPrincipals += $loginName
-                        # Continue with other logins even if one fails
+                    else {
+                        Write-Log -Message "Login '$loginName' already exists (idempotent)" -Level Info -LogFile $logFile -EnableEventLog $false
+                    }
+                    
+                    # Check if user already exists in database (idempotent)
+                    $existingUser = Get-DbaDbUser -SqlInstance $SqlInstance -Database $Database_Name -User $loginName -ErrorAction SilentlyContinue
+                    if (-not $existingUser) {
+                        # Create database user mapped to login
+                        New-DbaDbUser -SqlInstance $SqlInstance -Database $Database_Name -Login $loginName -Username $loginName -ErrorAction Stop
+                        Write-Log -Message "Created database user: $loginName in database $Database_Name" -Level Info -LogFile $logFile -EnableEventLog $false
+                    }
+                    else {
+                        Write-Log -Message "User '$loginName' already exists in database (idempotent)" -Level Info -LogFile $logFile -EnableEventLog $false
                     }
                 }
                 else {
@@ -374,14 +368,109 @@ try {
                 }
             }
             
-            # Log completion status based on success/failure
-            if ($failedPrincipals.Count -eq 0) {
-                Write-Log -Message "Completed login and user creation for Pillar '$Pillar'" -Level Success -LogFile $logFile -EnableEventLog $enableEventLog -EventLogSource $eventLogSource
+            Write-Log -Message "STEP 2 completed: All logins and users created successfully" -Level Success -LogFile $logFile -EnableEventLog $enableEventLog -EventLogSource $eventLogSource
+            
+            # ============================================================
+            # STEP 3: Create db_executor Role (EXIT on failure)
+            # ============================================================
+            Write-Log -Message "STEP 3: Creating db_executor database role..." -Level Info -LogFile $logFile -EnableEventLog $enableEventLog -EventLogSource $eventLogSource
+            
+            if ($PSCmdlet.ShouldProcess("db_executor", "Create database role")) {
+                # Check if db_executor role already exists (idempotent)
+                $existingRole = Get-DbaDbRole -SqlInstance $SqlInstance -Database $Database_Name -Role 'db_executor' -ErrorAction SilentlyContinue
+                if (-not $existingRole) {
+                    # Create db_executor role
+                    New-DbaDbRole -SqlInstance $SqlInstance -Database $Database_Name -Role 'db_executor' -ErrorAction Stop
+                    Write-Log -Message "Created database role: db_executor" -Level Info -LogFile $logFile -EnableEventLog $false
+                    
+                    # Grant EXECUTE permission to db_executor role
+                    Invoke-DbaQuery -SqlInstance $SqlInstance -Database $Database_Name -Query "GRANT EXECUTE TO [db_executor]" -ErrorAction Stop
+                    Write-Log -Message "Granted EXECUTE permission to db_executor role" -Level Info -LogFile $logFile -EnableEventLog $false
+                }
+                else {
+                    Write-Log -Message "Role 'db_executor' already exists (idempotent)" -Level Info -LogFile $logFile -EnableEventLog $false
+                }
             }
             else {
-                Write-Log -Message "Completed login and user creation for Pillar '$Pillar' with $($failedPrincipals.Count) failure(s)" -Level Warning -LogFile $logFile -EnableEventLog $enableEventLog -EventLogSource $eventLogSource
+                Write-Log -Message "[WHATIF] Would create db_executor role and grant EXECUTE permission" -Level Info -LogFile $logFile -EnableEventLog $false
             }
             
+            Write-Log -Message "STEP 3 completed: db_executor role created successfully" -Level Success -LogFile $logFile -EnableEventLog $enableEventLog -EventLogSource $eventLogSource
+            
+            # ============================================================
+            # STEP 4: Setup Security (EXIT on failure)
+            # ============================================================
+            Write-Log -Message "STEP 4: Setting up security for users..." -Level Info -LogFile $logFile -EnableEventLog $enableEventLog -EventLogSource $eventLogSource
+            
+            foreach ($loginName in $loginNames) {
+                if ($PSCmdlet.ShouldProcess("$loginName", "Assign database roles")) {
+                    # DEV_RW (DEV pillar only): db_owner
+                    if ($Pillar -eq 'DEV' -and $loginName -like '*_DEV_RW') {
+                        # Check if already member of db_owner (idempotent)
+                        $existingMember = Get-DbaDbRoleMember -SqlInstance $SqlInstance -Database $Database_Name -Role 'db_owner' -ErrorAction SilentlyContinue | Where-Object { $_.UserName -eq $loginName }
+                        if (-not $existingMember) {
+                            Add-DbaDbRoleMember -SqlInstance $SqlInstance -Database $Database_Name -Role 'db_owner' -Member $loginName -Confirm:$false -ErrorAction Stop
+                            Write-Log -Message "Added user '$loginName' to db_owner role" -Level Info -LogFile $logFile -EnableEventLog $false
+                        }
+                        else {
+                            Write-Log -Message "User '$loginName' already member of db_owner (idempotent)" -Level Info -LogFile $logFile -EnableEventLog $false
+                        }
+                    }
+                    # *_RO users: db_datareader
+                    elseif ($loginName -like '*_RO') {
+                        # Check if already member of db_datareader (idempotent)
+                        $existingMember = Get-DbaDbRoleMember -SqlInstance $SqlInstance -Database $Database_Name -Role 'db_datareader' -ErrorAction SilentlyContinue | Where-Object { $_.UserName -eq $loginName }
+                        if (-not $existingMember) {
+                            Add-DbaDbRoleMember -SqlInstance $SqlInstance -Database $Database_Name -Role 'db_datareader' -Member $loginName -Confirm:$false -ErrorAction Stop
+                            Write-Log -Message "Added user '$loginName' to db_datareader role" -Level Info -LogFile $logFile -EnableEventLog $false
+                        }
+                        else {
+                            Write-Log -Message "User '$loginName' already member of db_datareader (idempotent)" -Level Info -LogFile $logFile -EnableEventLog $false
+                        }
+                    }
+                    # *_RW users (FNC_RW, PRS_RW): db_datareader, db_datawriter, db_executor
+                    elseif ($loginName -like '*_RW') {
+                        # db_datareader
+                        $existingMember = Get-DbaDbRoleMember -SqlInstance $SqlInstance -Database $Database_Name -Role 'db_datareader' -ErrorAction SilentlyContinue | Where-Object { $_.UserName -eq $loginName }
+                        if (-not $existingMember) {
+                            Add-DbaDbRoleMember -SqlInstance $SqlInstance -Database $Database_Name -Role 'db_datareader' -Member $loginName -Confirm:$false -ErrorAction Stop
+                            Write-Log -Message "Added user '$loginName' to db_datareader role" -Level Info -LogFile $logFile -EnableEventLog $false
+                        }
+                        else {
+                            Write-Log -Message "User '$loginName' already member of db_datareader (idempotent)" -Level Info -LogFile $logFile -EnableEventLog $false
+                        }
+                        
+                        # db_datawriter
+                        $existingMember = Get-DbaDbRoleMember -SqlInstance $SqlInstance -Database $Database_Name -Role 'db_datawriter' -ErrorAction SilentlyContinue | Where-Object { $_.UserName -eq $loginName }
+                        if (-not $existingMember) {
+                            Add-DbaDbRoleMember -SqlInstance $SqlInstance -Database $Database_Name -Role 'db_datawriter' -Member $loginName -Confirm:$false -ErrorAction Stop
+                            Write-Log -Message "Added user '$loginName' to db_datawriter role" -Level Info -LogFile $logFile -EnableEventLog $false
+                        }
+                        else {
+                            Write-Log -Message "User '$loginName' already member of db_datawriter (idempotent)" -Level Info -LogFile $logFile -EnableEventLog $false
+                        }
+                        
+                        # db_executor
+                        $existingMember = Get-DbaDbRoleMember -SqlInstance $SqlInstance -Database $Database_Name -Role 'db_executor' -ErrorAction SilentlyContinue | Where-Object { $_.UserName -eq $loginName }
+                        if (-not $existingMember) {
+                            Add-DbaDbRoleMember -SqlInstance $SqlInstance -Database $Database_Name -Role 'db_executor' -Member $loginName -Confirm:$false -ErrorAction Stop
+                            Write-Log -Message "Added user '$loginName' to db_executor role" -Level Info -LogFile $logFile -EnableEventLog $false
+                        }
+                        else {
+                            Write-Log -Message "User '$loginName' already member of db_executor (idempotent)" -Level Info -LogFile $logFile -EnableEventLog $false
+                        }
+                    }
+                }
+                else {
+                    Write-Log -Message "[WHATIF] Would assign database roles to: $loginName" -Level Info -LogFile $logFile -EnableEventLog $false
+                }
+            }
+            
+            Write-Log -Message "STEP 4 completed: Security setup completed successfully" -Level Success -LogFile $logFile -EnableEventLog $enableEventLog -EventLogSource $eventLogSource
+            
+            # ============================================================
+            # Configuration Summary
+            # ============================================================
             Write-Log -Message "Database '$Database_Name' configuration summary:" -Level Info -LogFile $logFile -EnableEventLog $false
             Write-Log -Message "  - Total data files in PRIMARY filegroup: $numberOfDataFiles" -Level Info -LogFile $logFile -EnableEventLog $false
             Write-Log -Message "  - Data file location: $dataDirectory" -Level Info -LogFile $logFile -EnableEventLog $false
@@ -390,16 +479,8 @@ try {
             Write-Log -Message "  - Collation: $Collation" -Level Info -LogFile $logFile -EnableEventLog $false
             Write-Log -Message "  - Query Store: $(if ($server.VersionMajor -ge 13) { 'Enabled' } else { 'Not Available' })" -Level Info -LogFile $logFile -EnableEventLog $false
             Write-Log -Message "  - Pillar: $Pillar, Datagroup: $Datagroup" -Level Info -LogFile $logFile -EnableEventLog $false
-            if ($successfulPrincipals.Count -gt 0) {
-                Write-Log -Message "  - Logins/Users created: $($successfulPrincipals -join ', ')" -Level Info -LogFile $logFile -EnableEventLog $false
-            }
-            else {
-                Write-Log -Message "  - Logins/Users created: None" -Level Info -LogFile $logFile -EnableEventLog $false
-            }
-            if ($failedPrincipals.Count -gt 0) {
-                Write-Log -Message "  - Logins/Users failed: $($failedPrincipals -join ', ')" -Level Warning -LogFile $logFile -EnableEventLog $false
-            }
-            Write-Log -Message "  - Database role: $(if ($Pillar -eq 'DEV') { 'db_owner (DEV_RW only)' } else { 'None (default)' })" -Level Info -LogFile $logFile -EnableEventLog $false
+            Write-Log -Message "  - Logins/Users: $($loginNames -join ', ')" -Level Info -LogFile $logFile -EnableEventLog $false
+            Write-Log -Message "  - Database roles: db_executor (custom), plus standard roles assigned per user type" -Level Info -LogFile $logFile -EnableEventLog $false
         }
         catch {
             Write-Log -Message "Failed to create database: $($_.Exception.Message)" -Level Error -LogFile $logFile -EnableEventLog $enableEventLog -EventLogSource $eventLogSource
