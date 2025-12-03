@@ -1,23 +1,232 @@
 # SQL Server Database Creation Scripts
 
-A PowerShell-based automation tool for creating and configuring SQL Server databases with optimal file distribution and professional logging.
+A PowerShell-based automation tool for creating and configuring SQL Server databases with automatic login/user provisioning and role-based security.
 
 ## Overview
 
-This repository provides PowerShell scripts to automate the creation of SQL Server databases with:
+This script automates the creation of SQL Server databases with:
+
 - Automatic calculation of optimal number of data files based on expected database size
-- Configurable file sizes and growth settings
-- Multi-drive support for data and log files
+- Automatic derivation of data and log paths from SQL Server instance defaults
+- Windows login and database user creation based on environment (Pillar) and data group
+- Custom `db_executor` role with EXECUTE permission
+- Role-based security model with appropriate permissions per user type
 - Query Store enablement for SQL Server 2016+
-- Comprehensive logging
-- Error handling and validation
+- Comprehensive logging with optional Windows Event Log integration
+- Idempotent design: safe to run multiple times without errors
 
 ## Prerequisites
 
 - **PowerShell**: Version 5.1 or higher
 - **dbatools Module**: PowerShell module for SQL Server administration
-- **SQL Server**: Access to a SQL Server instance (2012 or higher)
-- **Permissions**: Appropriate permissions to create databases on the target SQL Server instance
+- **SQL Server**: Access to a SQL Server instance (2016 or higher recommended for Query Store)
+- **Permissions**: CREATE DATABASE, ALTER ANY LOGIN, and database-level permissions
+- **Active Directory**: The Windows groups (logins) must already exist in AD before running the script
+- **Domain-joined SQL Server**: The script creates Windows logins that require domain connectivity
+
+## Files in This Repository
+
+| File | Description |
+|------|-------------|
+| `SQLDatabaseCreation/pod_sql_invoke-databasecreation.ps1` | Main script - run this to create databases |
+| `SQLDatabaseCreation/pod_sql_databaseutils.psm1` | Helper functions (disk space check, logging, etc.) |
+| `SQLDatabaseCreation/pod_sql_databaseconfig.psd1` | Configuration file for file sizes and logging options |
+
+## How It Works (4-Step Idempotent Workflow)
+
+The script executes four steps in sequence. Each step exits immediately on failure, and all steps are idempotent (safe to rerun).
+
+### Step 1: Create Database
+
+1. Connect to the SQL Server instance
+2. Exit early if the database already exists
+3. Derive data and log paths from instance default paths
+4. Calculate optimal number of data files based on ExpectedDatabaseSize and FileSizeThreshold
+5. Validate sufficient disk space on data and log drives (exit if insufficient)
+6. Create necessary directories
+7. Create database with all data files in PRIMARY filegroup
+8. Set database owner to 'sa'
+9. Enable Query Store (SQL Server 2016+)
+
+### Step 2: Create Logins and Users
+
+Based on the `Pillar` and `Datagroup` parameters, the script creates Windows logins and maps them as database users. The login names follow a fixed naming convention (see "Logins, Users and Roles" section below). This step is idempotent: existing logins and users are detected and reused.
+
+### Step 3: Create db_executor Role
+
+Creates a custom database role named `db_executor` and grants it EXECUTE permission. This role allows users to execute stored procedures and functions without granting broader permissions.
+
+### Step 4: Setup Security
+
+Assigns database roles to users based on their type:
+
+| User Type | Roles Assigned |
+|-----------|----------------|
+| `*_DEV_RW` (DEV pillar only) | db_owner |
+| `*_RO` users | db_datareader |
+| `*_RW` users (FNC_RW, PRS_RW) | db_datareader, db_datawriter, db_executor |
+
+## Parameters
+
+The script accepts the following parameters:
+
+| Parameter | Required | Description | Example |
+|-----------|----------|-------------|---------|
+| `SqlInstance` | Yes | SQL Server instance (server name or server,port) | `"SQLSERVER01"` or `"SQLSERVER01,1433"` |
+| `Database_Name` | Yes | Name of the database to create | `"DB_MSS0_DEMO"` |
+| `ExpectedDatabaseSize` | Yes | Expected total size (MB, GB, or TB) | `"50GB"` |
+| `Pillar` | Yes | Environment: DEV, ACC, or PROD | `"DEV"` |
+| `Datagroup` | Yes | Data group identifier (used in login names) | `"MSS"` |
+| `Collation` | No | Database collation (default: Latin1_General_CI_AS) | `"SQL_Latin1_General_CP1_CI_AS"` |
+
+Common PowerShell switches are also supported: `-WhatIf` (preview without changes) and `-Verbose` (detailed output).
+
+## Configuration File
+
+The script automatically loads configuration from `pod_sql_databaseconfig.psd1` in the same directory. The script will exit early if this file is missing or invalid.
+
+The configuration file controls file sizes and logging options only. Database identity and server connection are passed as script parameters.
+
+```powershell
+@{
+    FileSizes = @{
+        DataGrowth        = "512MB"    # Growth increment for data files
+        LogSize           = "1024MB"   # Initial size for log file
+        LogGrowth         = "512MB"    # Growth increment for log file
+        FileSizeThreshold = "500MB"    # Max size per data file (used to calculate file count)
+    }
+
+    EnableEventLog = $true             # Write events to Windows Application Event Log
+    EventLogSource = "SQLDatabaseScripts"
+}
+```
+
+### File Size Calculation
+
+The script automatically calculates the optimal number of data files:
+
+- If `ExpectedDatabaseSize > FileSizeThreshold`: Number of files = Ceiling(ExpectedDatabaseSize / FileSizeThreshold)
+- Otherwise: 1 file
+- Maximum: 8 files (SQL Server best practice)
+- All files are created in the PRIMARY filegroup
+
+## Logins, Users and Roles
+
+### Login Naming Convention
+
+Login names are automatically generated based on `Pillar` and `Datagroup`:
+
+**DEV Environment:**
+- Domain prefix: `TDA001\`
+- Login prefix: `1005_GS_`
+- Logins created:
+  - `TDA001\1005_GS_{Datagroup}0_DEV_RW` (gets db_owner)
+  - `TDA001\1005_GS_{Datagroup}0_FNC_RW` (gets db_datareader, db_datawriter, db_executor)
+  - `TDA001\1005_GS_{Datagroup}0_PRS_RO` (gets db_datareader)
+  - `TDA001\1005_GS_{Datagroup}0_PRS_RW` (gets db_datareader, db_datawriter, db_executor)
+
+**ACC Environment:**
+- Domain prefix: `TDA001\`
+- Login prefix: `0005_GS_`
+- Logins created:
+  - `TDA001\0005_GS_{Datagroup}0_FNC_RW`
+  - `TDA001\0005_GS_{Datagroup}0_PRS_RO`
+  - `TDA001\0005_GS_{Datagroup}0_PRS_RW`
+
+**PROD Environment:**
+- Domain prefix: `GLOW001\`
+- Login prefix: `0005_GS_`
+- Logins created:
+  - `GLOW001\0005_GS_{Datagroup}0_FNC_RW`
+  - `GLOW001\0005_GS_{Datagroup}0_PRS_RO`
+  - `GLOW001\0005_GS_{Datagroup}0_PRS_RW`
+
+### Example: DEV with Datagroup "MSS"
+
+Running with `-Pillar DEV -Datagroup MSS` creates:
+
+| Login | Database User | Roles |
+|-------|---------------|-------|
+| `TDA001\1005_GS_MSS0_DEV_RW` | Same | db_owner |
+| `TDA001\1005_GS_MSS0_FNC_RW` | Same | db_datareader, db_datawriter, db_executor |
+| `TDA001\1005_GS_MSS0_PRS_RO` | Same | db_datareader |
+| `TDA001\1005_GS_MSS0_PRS_RW` | Same | db_datareader, db_datawriter, db_executor |
+
+### Important: AD Groups Must Exist
+
+The script creates SQL Server logins mapped to Windows groups. These AD groups must already exist before running the script. If a group does not exist, the login creation step will fail.
+
+## Usage Examples
+
+### Basic Usage (DEV Environment)
+
+```powershell
+.\SQLDatabaseCreation\pod_sql_invoke-databasecreation.ps1 `
+    -SqlInstance "SQLSERVER01" `
+    -Database_Name "DB_MSS0_DEMO" `
+    -ExpectedDatabaseSize "50GB" `
+    -Pillar "DEV" `
+    -Datagroup "MSS"
+```
+
+This creates:
+- Database `DB_MSS0_DEMO` with multiple data files (50GB / 500MB threshold = ~100 files, capped at 8)
+- 4 Windows logins with `TDA001\1005_GS_MSS0_*` naming
+- Database users mapped to those logins
+- `db_executor` role with EXECUTE permission
+- Role assignments per user type
+
+### Preview Mode (WhatIf)
+
+```powershell
+.\SQLDatabaseCreation\pod_sql_invoke-databasecreation.ps1 `
+    -SqlInstance "SQLSERVER01" `
+    -Database_Name "DB_MSS0_DEMO" `
+    -ExpectedDatabaseSize "50GB" `
+    -Pillar "DEV" `
+    -Datagroup "MSS" `
+    -WhatIf
+```
+
+Shows what would be created without making any changes.
+
+### Verbose Output
+
+```powershell
+.\SQLDatabaseCreation\pod_sql_invoke-databasecreation.ps1 `
+    -SqlInstance "SQLSERVER01" `
+    -Database_Name "DB_MSS0_DEMO" `
+    -ExpectedDatabaseSize "50GB" `
+    -Pillar "ACC" `
+    -Datagroup "FIN" `
+    -Verbose
+```
+
+### Production Environment
+
+```powershell
+.\SQLDatabaseCreation\pod_sql_invoke-databasecreation.ps1 `
+    -SqlInstance "PRODSQL01" `
+    -Database_Name "DB_FIN0_PROD" `
+    -ExpectedDatabaseSize "100GB" `
+    -Pillar "PROD" `
+    -Datagroup "FIN" `
+    -Collation "SQL_Latin1_General_CP1_CI_AS"
+```
+
+Note: PROD uses `GLOW001\` domain prefix instead of `TDA001\`.
+
+## Idempotency and Reruns
+
+The script is designed to be safely rerun:
+
+- **Database exists**: Step 1 logs a warning and exits early (no error)
+- **Login exists**: Step 2 detects and reuses existing logins
+- **User exists**: Step 2 detects and reuses existing database users
+- **Role exists**: Step 3 detects and reuses existing db_executor role
+- **Role membership exists**: Step 4 checks before adding users to roles
+
+This means you can run the script again after a partial failure or to verify the configuration.
 
 ## Installation
 
@@ -30,219 +239,17 @@ Install-Module -Name dbatools -Scope CurrentUser -Force -AllowClobber
 ### 2. Clone or Download Repository
 
 ```powershell
-git clone https://github.com/karim-attaleb/sqlserver-databasescripts.git
-cd sqlserver-databasescripts
+git clone https://github.com/karim-attaleb/SQLServer-DatabaseScripts.git
+cd SQLServer-DatabaseScripts
 ```
 
-## Configuration
+### 3. Configure File Sizes (Optional)
 
-Edit the `SQLDatabaseCreation/DatabaseConfig.psd1` file to customize your database settings:
-
-```powershell
-@{
-    # SQL Server instance name (e.g., "localhost", "SERVER\INSTANCE")
-    SqlInstance = "YourSQLServerInstance"
-
-    # Database settings
-    Database = @{
-        Name = "DB_MSS0_DEMO"
-        DataDrive = "G"  # Drive letter for data files
-        LogDrive = "L"   # Drive letter for log files
-        
-        # Expected total database size used to automatically calculate
-        # the optimal number of data files based on FileSizeThreshold.
-        # If size > threshold, multiple files will be created.
-        # Otherwise, a single file will be used.
-        # Examples: "50GB", "500MB", "1TB"
-        ExpectedDatabaseSize = "5GB"
-    }
-
-    # File size configuration
-    FileSizes = @{
-        DataSize = "200MB"        # Initial size of each data file
-        DataGrowth = "100MB"      # Growth increment for data files
-        LogSize = "100MB"         # Initial size of log file
-        LogGrowth = "100MB"       # Growth increment for log file
-        FileSizeThreshold = "10GB" # Maximum size per data file (used for auto-calculation)
-    }
-
-    # Logging
-    LogFile = "DatabaseCreation_$(Get-Date -Format 'yyyyMMdd_HHmmss').log"
-}
-```
-
-### Configuration Parameters Explained
-
-#### SqlInstance
-The name of your SQL Server instance. Examples:
-- `"localhost"` - Default instance on local machine
-- `"SERVER01"` - Named server
-- `"SERVER01\INSTANCE01"` - Named instance
-
-#### Database Settings
-- **Name**: The name of the database to create
-- **DataDrive**: Drive letter where data files will be stored (without colon)
-- **LogDrive**: Drive letter where log files will be stored (without colon)
-- **ExpectedDatabaseSize**: Expected total size of the database. If size exceeds `FileSizeThreshold`, multiple files will be created; otherwise, a single file is used
-
-#### FileSizes Settings
-- **DataSize**: Initial size of each data file (e.g., "200MB", "1GB")
-- **DataGrowth**: How much each data file grows when space is needed
-- **LogSize**: Initial size of the transaction log file
-- **LogGrowth**: How much the log file grows when space is needed
-- **FileSizeThreshold**: Maximum desired size for each data file. Used to calculate the optimal number of files when `ExpectedDatabaseSize` is specified
-
-### Automatic File Count Calculation
-
-The script automatically calculates the optimal number of data files based on `ExpectedDatabaseSize`:
-
-- **Formula**: 
-  - If `ExpectedDatabaseSize > FileSizeThreshold`: `NumberOfFiles = Ceiling(ExpectedDatabaseSize / FileSizeThreshold)`
-  - Otherwise: 1 file
-- **Minimum**: 1 file
-- **Maximum**: 8 files (SQL Server best practice)
-- **All files are created in the PRIMARY filegroup**
-
-#### Examples:
-- Expected: 5GB, Threshold: 10GB → 1 file (size ≤ threshold)
-- Expected: 50GB, Threshold: 10GB → 5 files (ceiling(50/10))
-- Expected: 100GB, Threshold: 10GB → 10 files (ceiling(100/10))
-
-### Disk Space Validation
-
-Before creating a database, the script automatically validates that the target drives have sufficient free space to accommodate all database files plus a safety margin.
-
-**Validation Process:**
-1. Checks available space on both data and log drives using `Get-DbaDiskSpace` from dbatools
-2. Calculates required space based on expected database size and file count
-3. Adds 10% safety margin to ensure buffer space for growth
-4. Fails immediately if insufficient space is detected, preventing out-of-space errors during database operations
-
-**Space Calculation Example:**
-- Configuration: 4 data files × 200MB each + 100MB log file
-- Required space: (4 × 200MB) + 100MB = 900MB
-- With 10% margin: 900MB × 1.10 = 990MB required
-- Data drive must have at least 880MB free (800MB + 10%)
-- Log drive must have at least 110MB free (100MB + 10%)
-
-**Benefits:**
-- Prevents database creation failures due to insufficient disk space
-- Provides early warning before space-intensive operations
-- Ensures adequate buffer for auto-growth operations
-- Reduces risk of database corruption from unexpected out-of-space conditions
-
-If validation fails, the script will stop with a clear error message indicating which drive lacks space and how much is needed.
-
-## Usage
-
-### Basic Usage
-
-```powershell
-# Run the database creation script
-.\SQLDatabaseCreation\Invoke-DatabaseCreation.ps1 -ConfigPath .\SQLDatabaseCreation\DatabaseConfig.psd1
-```
-
-### WhatIf Mode
-
-Preview what would happen without actually creating the database:
-
-```powershell
-.\SQLDatabaseCreation\Invoke-DatabaseCreation.ps1 -ConfigPath .\SQLDatabaseCreation\DatabaseConfig.psd1 -WhatIf
-```
-
-### With Verbose Output
-
-```powershell
-.\SQLDatabaseCreation\Invoke-DatabaseCreation.ps1 -ConfigPath .\SQLDatabaseCreation\DatabaseConfig.psd1 -Verbose
-```
-
-## Examples
-
-### Example 1: Create Small Database (Single File)
-
-```powershell
-# DatabaseConfig.psd1
-@{
-    SqlInstance = "localhost"
-    Database = @{
-        Name = "MyDatabase"
-        DataDrive = "D"
-        LogDrive = "E"
-        ExpectedDatabaseSize = "5GB"  # Results in 1 file (5GB < 10GB threshold)
-    }
-    FileSizes = @{
-        DataSize = "500MB"
-        DataGrowth = "250MB"
-        LogSize = "250MB"
-        LogGrowth = "100MB"
-        FileSizeThreshold = "10GB"
-    }
-    LogFile = "DatabaseCreation.log"
-}
-
-# Run
-.\SQLDatabaseCreation\Invoke-DatabaseCreation.ps1 -ConfigPath .\SQLDatabaseCreation\DatabaseConfig.psd1
-```
-
-### Example 2: Create Large Database (Multiple Files)
-
-```powershell
-# DatabaseConfig.psd1
-@{
-    SqlInstance = "localhost"
-    Database = @{
-        Name = "LargeDatabase"
-        DataDrive = "D"
-        LogDrive = "E"
-        ExpectedDatabaseSize = "50GB"  # Results in 5 files (ceiling(50GB / 10GB) = 5)
-    }
-    FileSizes = @{
-        DataSize = "1GB"
-        DataGrowth = "500MB"
-        LogSize = "500MB"
-        LogGrowth = "250MB"
-        FileSizeThreshold = "10GB"
-    }
-    LogFile = "DatabaseCreation.log"
-}
-
-# Run
-.\SQLDatabaseCreation\Invoke-DatabaseCreation.ps1 -ConfigPath .\SQLDatabaseCreation\DatabaseConfig.psd1
-```
-
-## Features
-
-### Automatic Directory Creation
-The script automatically creates the necessary directories on the data and log drives if they don't exist.
-
-### Multiple Data Files in PRIMARY Filegroup
-All data files are created in the PRIMARY filegroup following SQL Server best practices. The script automatically calculates the optimal number of files (up to 8) based on the expected database size, and creates all files with equal size in the PRIMARY filegroup to ensure optimal proportional fill algorithm performance.
-
-### Query Store Enablement
-For SQL Server 2016 and later, Query Store is automatically enabled with optimized settings:
-- State: ReadWrite
-- Capture Mode: Auto
-- Max Size: 100 MB
-- Cleanup Mode: Auto
-
-### Comprehensive Logging
-All operations are logged to a timestamped log file with:
-- Timestamp for each operation
-- Log level (Info, Warning, Error, Success)
-- Detailed error messages and stack traces
-
-### Error Handling
-Robust error handling ensures:
-- Connection validation before operations
-- Graceful handling of existing databases
-- Detailed error reporting
-- Non-zero exit codes on failure
+Edit `SQLDatabaseCreation/pod_sql_databaseconfig.psd1` to adjust file sizes and logging options for your environment.
 
 ## Testing
 
-The repository includes comprehensive Pester tests for all functions.
-
-### Run All Tests
+The repository includes Pester tests for the utility functions.
 
 ```powershell
 # Install Pester if not already installed
@@ -252,57 +259,49 @@ Install-Module -Name Pester -Force -SkipPublisherCheck
 Invoke-Pester -Path .\Tests\ -Output Detailed
 ```
 
-### Run Specific Test File
-
-```powershell
-Invoke-Pester -Path .\Tests\DatabaseUtils.Tests.ps1 -Output Detailed
-```
-
-## Module Functions
-
-The `DatabaseUtils.psm1` module provides the following functions:
-
-### Convert-SizeToInt
-Converts size strings (e.g., "100MB", "10GB") to integer values in MB.
-
-### Calculate-OptimalDataFiles
-Calculates the optimal number of data files based on expected database size and threshold.
-
-### Initialize-Directories
-Creates necessary directories for data and log files if they don't exist.
-
-### Write-Log
-Writes log messages to both console and log file with different severity levels.
-
-### Enable-QueryStore
-Enables and configures Query Store for SQL Server 2016+.
-
-Use `Get-Help <FunctionName> -Full` to see detailed help for each function.
-
 ## Troubleshooting
 
-### Issue: "Cannot connect to SQL Server"
+### Configuration file not found
+
+**Error**: `Configuration file not found at: ...\pod_sql_databaseconfig.psd1`
+
+**Solution**: Ensure `pod_sql_databaseconfig.psd1` exists in the same directory as `pod_sql_invoke-databasecreation.ps1`.
+
+### Cannot connect to SQL Server
+
 **Solution**: Verify that:
 - SQL Server service is running
-- SQL Server instance name is correct
+- SQL Server instance name is correct (use `server,port` format if needed)
 - You have network connectivity to the server
 - Windows Firewall allows SQL Server connections
 
-### Issue: "Access denied" or permission errors
-**Solution**: Ensure your Windows account or SQL login has:
+### Login creation fails / AD group does not exist
+
+**Error**: `New-DbaLogin` fails with "Cannot find Windows NT group/user"
+
+**Solution**: The AD group must exist before running the script. Verify with:
+```powershell
+Get-ADGroup -Identity "1005_GS_MSS0_DEV_RW"
+```
+
+### Access denied or permission errors
+
+**Solution**: Ensure your Windows account has:
 - `CREATE DATABASE` permission on the SQL Server instance
+- `ALTER ANY LOGIN` permission for creating logins
 - Write permissions on the data and log drive directories
 
-### Issue: "Drive not found"
-**Solution**: 
-- Verify the drive letters exist on the target server
-- Ensure the drives have sufficient free space
-- Check that the SQL Server service account has access to the drives
+### Insufficient disk space
 
-### Issue: Database already exists
-**Solution**: The script will skip creation and log a warning. To recreate:
-1. Manually drop the existing database
-2. Run the script again
+**Error**: `Disk space validation failed. Exiting early.`
+
+**Solution**: Free up space on the data or log drives, or reduce the `ExpectedDatabaseSize` parameter.
+
+### Database already exists
+
+**Behavior**: The script logs a warning and exits early. This is expected behavior for idempotency.
+
+**To recreate**: Manually drop the existing database first, then run the script again.
 
 ## Contributing
 
