@@ -20,7 +20,7 @@
     The expected size of the database (e.g., "50GB", "100GB").
 
 .PARAMETER Pillar
-    The environment pillar. Valid values are 'DEV', 'UAC', 'PROD'.
+    The environment pillar. Valid values are 'DEV', 'ACC', 'PROD'.
 
 .PARAMETER Datagroup
     The data group identifier.
@@ -37,7 +37,7 @@
     Shows what would happen without actually creating the database.
 
 .EXAMPLE
-    .\pod_sql_invoke-databasecreation.ps1 -SqlInstance "localhost,1433" -Database_Name "MyDatabase" -ExpectedDatabaseSize "50GB" -Pillar "UAC" -Datagroup "DG01" -Verbose
+    .\pod_sql_invoke-databasecreation.ps1 -SqlInstance "localhost,1433" -Database_Name "MyDatabase" -ExpectedDatabaseSize "50GB" -Pillar "ACC" -Datagroup "DG01" -Verbose
     Creates a database with verbose output showing detailed progress.
 
 .NOTES
@@ -59,7 +59,7 @@
     10. Create logins and database users based on Pillar:
         - DEV: TDA001\1005_GS_{Datagroup}0_DEV_RW (with db_owner role), TDA001\1005_GS_{Datagroup}0_FNC_RW, 
                TDA001\1005_GS_{Datagroup}0_PRS_RO, TDA001\1005_GS_{Datagroup}0_PRS_RW
-        - UAC: TDA001\0005_GS_{Datagroup}0_FNC_RW, TDA001\0005_GS_{Datagroup}0_PRS_RO, 
+        - ACC: TDA001\0005_GS_{Datagroup}0_FNC_RW, TDA001\0005_GS_{Datagroup}0_PRS_RO, 
                TDA001\0005_GS_{Datagroup}0_PRS_RW
         - PROD: GLOW001\0005_GS_{Datagroup}0_FNC_RW, GLOW001\0005_GS_{Datagroup}0_PRS_RO, 
                 GLOW001\0005_GS_{Datagroup}0_PRS_RW
@@ -79,8 +79,8 @@ param(
     [ValidatePattern('^\d+(MB|GB|TB)$')]
     [string]$ExpectedDatabaseSize,
     
-    [Parameter(Mandatory = $true, HelpMessage = "Environment pillar (DEV, UAC, PROD)")]
-    [ValidateSet('DEV', 'UAC', 'PROD')]
+    [Parameter(Mandatory = $true, HelpMessage = "Environment pillar (DEV, ACC, PROD)")]
+    [ValidateSet('DEV', 'ACC', 'PROD')]
     [string]$Pillar,
     
     [Parameter(Mandatory = $true, HelpMessage = "Data group identifier")]
@@ -112,10 +112,10 @@ catch {
 }
 
 # Default configuration values
-$dataGrowth = "100MB"
-$logSize = "100MB"
-$logGrowth = "100MB"
-$fileSizeThreshold = "10GB"
+$dataGrowth = "512MB"
+$logSize = "1024MB"
+$logGrowth = "512MB"
+$fileSizeThreshold = "500MB"
 $logFile = "$PSScriptRoot\DatabaseCreation.log"
 $enableEventLog = $true
 $eventLogSource = "SQLDatabaseScripts"
@@ -299,7 +299,7 @@ try {
                 $domainPrefix = 'GLOW001\'
             }
             else {
-                # DEV or UAC
+                # DEV or ACC
                 $domainPrefix = 'TDA001\'
             }
             
@@ -313,7 +313,7 @@ try {
                 )
             }
             else {
-                # UAC or PROD
+                # ACC or PROD
                 $loginNames = @(
                     "${domainPrefix}0005_GS_${Datagroup}0_FNC_RW",
                     "${domainPrefix}0005_GS_${Datagroup}0_PRS_RO",
@@ -355,7 +355,7 @@ try {
                         
                         # If Pillar is DEV and this is the DEV_RW login, add user to db_owner role
                         if ($Pillar -eq 'DEV' -and $loginName -like '*_DEV_RW') {
-                            Add-DbaDbRoleMember -SqlInstance $SqlInstance -Database $Database_Name -Role 'db_owner' -User $loginName -Confirm:$false -ErrorAction Stop
+                            Add-DbaDbRoleMember -SqlInstance $SqlInstance -Database $Database_Name -Role 'db_owner' -Member $loginName -Confirm:$false -ErrorAction Stop
                             Write-Log -Message "Added user '$loginName' to db_owner role" -Level Info -LogFile $logFile -EnableEventLog $false
                         }
                         
