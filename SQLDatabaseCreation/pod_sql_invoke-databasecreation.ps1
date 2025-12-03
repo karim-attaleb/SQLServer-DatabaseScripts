@@ -124,14 +124,29 @@ catch {
     exit 1
 }
 
-# Default configuration values
-$dataGrowth = "512MB"
-$logSize = "1024MB"
-$logGrowth = "512MB"
-$fileSizeThreshold = "500MB"
+# Load configuration from psd1 file (must be in same location as script)
+$configPath = Join-Path $PSScriptRoot "pod_sql_databaseconfig.psd1"
+if (-not (Test-Path $configPath)) {
+    Write-Error "Configuration file not found at: $configPath"
+    exit 1
+}
+
+try {
+    $config = Import-PowerShellDataFile -Path $configPath -ErrorAction Stop
+}
+catch {
+    Write-Error "Failed to load configuration file: $($_.Exception.Message)"
+    exit 1
+}
+
+# Extract configuration values
+$dataGrowth = $config.FileSizes.DataGrowth
+$logSize = $config.FileSizes.LogSize
+$logGrowth = $config.FileSizes.LogGrowth
+$fileSizeThreshold = $config.FileSizes.FileSizeThreshold
 $logFile = "$PSScriptRoot\DatabaseCreation.log"
-$enableEventLog = $true
-$eventLogSource = "SQLDatabaseScripts"
+$enableEventLog = $config.EnableEventLog
+$eventLogSource = $config.EventLogSource
 
 try {
     
