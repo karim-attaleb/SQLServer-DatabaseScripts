@@ -2,6 +2,41 @@
 
 A PowerShell-based automation tool for creating and configuring SQL Server databases with automatic login/user provisioning and role-based security.
 
+---
+
+## Table of Contents
+
+1. [Overview](#overview)
+2. [Prerequisites](#prerequisites)
+3. [Files in This Repository](#files-in-this-repository)
+4. [How It Works (4-Step Idempotent Workflow)](#how-it-works-4-step-idempotent-workflow)
+   - [Step 1: Create Database](#step-1-create-database)
+   - [Step 2: Create Logins and Users](#step-2-create-logins-and-users)
+   - [Step 3: Create db_executor Role](#step-3-create-db_executor-role)
+   - [Step 4: Setup Security](#step-4-setup-security)
+5. [Parameters](#parameters)
+6. [Configuration File](#configuration-file)
+   - [File Size Calculation](#file-size-calculation)
+7. [Logins, Users and Roles](#logins-users-and-roles)
+   - [Login Naming Convention](#login-naming-convention)
+   - [Example: DEV with Datagroup "MSS"](#example-dev-with-datagroup-mss)
+   - [Important: AD Groups Must Exist](#important-ad-groups-must-exist)
+8. [Usage Examples](#usage-examples)
+   - [Basic Usage (DEV Environment)](#basic-usage-dev-environment)
+   - [Preview Mode (WhatIf)](#preview-mode-whatif)
+   - [Verbose Output](#verbose-output)
+   - [Production Environment](#production-environment)
+9. [Idempotency and Reruns](#idempotency-and-reruns)
+10. [Installation](#installation)
+11. [Testing](#testing)
+12. [Troubleshooting](#troubleshooting)
+13. [Contributing](#contributing)
+14. [License](#license)
+15. [Author](#author)
+16. [Links](#links)
+
+---
+
 ## Overview
 
 This script automates the creation of SQL Server databases with:
