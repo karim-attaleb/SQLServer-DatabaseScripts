@@ -1,0 +1,51 @@
+# SAP Replication Server Resource File Template
+# This file is used by rs_init to configure the Replication Server
+# Variables like ${RS_SERVER_NAME} will be replaced at runtime
+
+# Replication Server Configuration
+rs.rs_name: ${RS_SERVER_NAME}
+rs.rs_network_protocol_list: tcp
+rs.rs_network_hostname_list: 0.0.0.0
+rs.rs_network_port_list: 5100
+
+# SA Password
+rs.rs_sa_password: ${RS_SA_PASSWORD}
+rs.rs_sa_login: sa
+
+# RSSD (Replication Server System Database) Configuration
+# The RSSD stores metadata about replication definitions, subscriptions, etc.
+rs.rssd_server_name: SYBASE_PRIMARY
+rs.rssd_database_name: ${RS_SERVER_NAME}_RSSD
+rs.rssd_sa_login: sa
+rs.rssd_sa_password: ${ASE_SA_PASSWORD}
+
+# RSSD Device Configuration
+rs.rssd_device_name: rssd_data
+rs.rssd_device_physical_name: /opt/sybase/data/rssd_data.dat
+rs.rssd_device_size: 100
+
+# RSSD Log Device
+rs.rssd_log_device_name: rssd_log
+rs.rssd_log_device_physical_name: /opt/sybase/data/rssd_log.dat
+rs.rssd_log_device_size: 50
+
+# Error Log
+rs.rs_errorlog: /opt/sybase/logs/${RS_SERVER_NAME}.log
+
+# ID Server Configuration
+# The ID Server assigns unique IDs to Replication Servers in the domain
+rs.id_server_name: ${RS_SERVER_NAME}
+rs.id_server_is_rs: yes
+
+# Stable Queue Configuration
+# Stable queues store transactions before they are applied to target databases
+rs.rs_stable_device_name: stable_queue
+rs.rs_stable_device_physical_name: /opt/sybase/data/stable_queue.dat
+rs.rs_stable_device_size: 200
+
+# Memory Configuration
+rs.rs_memory_limit: 256
+
+# Character Set
+rs.rs_charset: utf8
+rs.rs_sortorder: binary

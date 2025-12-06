@@ -1,0 +1,23 @@
+# SAP Replication Server Silent Installation Response File
+# This file is used for unattended installation of SAP Replication Server
+
+# License Agreement
+AGREE_TO_SAP_LICENSE=true
+
+# Installation Mode
+RUN_SILENT=true
+
+# Installation Directory
+INSTALL_LOCATION=/opt/sybase
+
+# Product License Type (evaluate for Developer Edition)
+SYBASE_PRODUCT_LICENSE_TYPE=evaluate
+
+# Components to Install
+CHOSEN_INSTALL_FEATURE_LIST=freplication_server,fopen_client,fdblib
+
+# Replication Server Configuration
+DO_CONFIGURE_RS=false
+
+# We will configure the Replication Server manually after installation
+# This allows for more control over the configuration
