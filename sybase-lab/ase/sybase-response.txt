@@ -1,0 +1,31 @@
+# SAP ASE Silent Installation Response File
+# This file is used for unattended installation of SAP ASE
+
+# License Agreement
+AGREE_TO_SAP_LICENSE=true
+
+# Installation Mode
+RUN_SILENT=true
+
+# Installation Directory
+INSTALL_LOCATION=/opt/sybase
+
+# Product License Type (evaluate for Developer Edition)
+SYBASE_PRODUCT_LICENSE_TYPE=evaluate
+
+# Components to Install
+# ASE Server
+CHOSEN_INSTALL_FEATURE_LIST=fase,fopen_client,fdblib,fjconnect160,fconn_python,fconn_perl,fconn_php,fconn_odbc,fsysam_util
+
+# ASE Configuration
+DO_CONFIGURE_ASE=false
+DO_CONFIGURE_BACKUP=false
+DO_CONFIGURE_XP=false
+DO_CONFIGURE_JS=false
+DO_CONFIGURE_SM=false
+DO_CONFIGURE_SCC=false
+DO_CONFIGURE_WS=false
+DO_CONFIGURE_COCKPIT=false
+
+# We will configure the server manually after installation
+# This allows for more control over the configuration

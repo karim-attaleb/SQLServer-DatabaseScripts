@@ -1,0 +1,26 @@
+# Sybase Interfaces File Template
+# This file defines server connections for Sybase clients
+# Variables will be replaced at runtime by entrypoint.sh
+
+# Primary ASE Server
+${ASE_SERVER_NAME}
+	master tcp ether 0.0.0.0 5000
+	query tcp ether 0.0.0.0 5000
+
+# Backup Server
+${ASE_SERVER_NAME}_BS
+	master tcp ether 0.0.0.0 5001
+	query tcp ether 0.0.0.0 5001
+
+# Remote servers (for replication)
+SYBASE_PRIMARY
+	master tcp ether sybase-primary 5000
+	query tcp ether sybase-primary 5000
+
+SYBASE_SECONDARY
+	master tcp ether sybase-secondary 5000
+	query tcp ether sybase-secondary 5000
+
+REPSERVER
+	master tcp ether sybase-repserver 5100
+	query tcp ether sybase-repserver 5100

@@ -1,0 +1,154 @@
+# Sybase ASE and Replication Server Lab Environment
+# 
+# This docker-compose file sets up:
+# - 2 Sybase ASE containers (primary and secondary)
+# - 1 Sybase Replication Server container
+#
+# Prerequisites:
+# 1. Download SAP ASE Developer Edition from SAP
+#    - Place ASE_Suite.linuxamd64.tgz in ./ase/
+# 2. Download SAP Replication Server from SAP
+#    - Place RepServer installer in ./repserver/
+#
+# Usage:
+#   docker-compose build
+#   docker-compose up -d
+#
+# Ports:
+#   - ASE Primary: 5000 (ASE), 5001 (Backup Server)
+#   - ASE Secondary: 5002 (ASE), 5003 (Backup Server)
+#   - Replication Server: 5100
+
+version: '3.8'
+
+services:
+  # Primary ASE Server - Source for replication
+  ase-primary:
+    build:
+      context: ./ase
+      dockerfile: Dockerfile
+      args:
+        ASE_SERVER_NAME: SYBASE_PRIMARY
+        ASE_SA_PASSWORD: ${ASE_SA_PASSWORD:-SybaseP@ss123}
+    container_name: sybase-primary
+    hostname: sybase-primary
+    ports:
+      - "5000:5000"   # ASE Server port
+      - "5001:5001"   # Backup Server port
+    volumes:
+      - ase-primary-data:/opt/sybase/data
+      - ase-primary-logs:/opt/sybase/logs
+      - ./scripts:/opt/sybase/scripts:ro
+    environment:
+      - SYBASE=/opt/sybase
+      - SYBASE_ASE=ASE-16_0
+      - ASE_SERVER_NAME=SYBASE_PRIMARY
+      - ASE_SA_PASSWORD=${ASE_SA_PASSWORD:-SybaseP@ss123}
+    networks:
+      sybase-net:
+        ipv4_address: 172.28.0.10
+    healthcheck:
+      test: ["CMD", "/opt/sybase/scripts/healthcheck.sh"]
+      interval: 30s
+      timeout: 10s
+      retries: 5
+      start_period: 120s
+    restart: unless-stopped
+
+  # Secondary ASE Server - Target for replication
+  ase-secondary:
+    build:
+      context: ./ase
+      dockerfile: Dockerfile
+      args:
+        ASE_SERVER_NAME: SYBASE_SECONDARY
+        ASE_SA_PASSWORD: ${ASE_SA_PASSWORD:-SybaseP@ss123}
+    container_name: sybase-secondary
+    hostname: sybase-secondary
+    ports:
+      - "5002:5000"   # ASE Server port
+      - "5003:5001"   # Backup Server port
+    volumes:
+      - ase-secondary-data:/opt/sybase/data
+      - ase-secondary-logs:/opt/sybase/logs
+      - ./scripts:/opt/sybase/scripts:ro
+    environment:
+      - SYBASE=/opt/sybase
+      - SYBASE_ASE=ASE-16_0
+      - ASE_SERVER_NAME=SYBASE_SECONDARY
+      - ASE_SA_PASSWORD=${ASE_SA_PASSWORD:-SybaseP@ss123}
+    networks:
+      sybase-net:
+        ipv4_address: 172.28.0.11
+    healthcheck:
+      test: ["CMD", "/opt/sybase/scripts/healthcheck.sh"]
+      interval: 30s
+      timeout: 10s
+      retries: 5
+      start_period: 120s
+    restart: unless-stopped
+
+  # Replication Server - Manages replication between ASE instances
+  repserver:
+    build:
+      context: ./repserver
+      dockerfile: Dockerfile
+      args:
+        RS_SERVER_NAME: REPSERVER
+        RS_SA_PASSWORD: ${RS_SA_PASSWORD:-RepServerP@ss123}
+    container_name: sybase-repserver
+    hostname: sybase-repserver
+    ports:
+      - "5100:5100"   # Replication Server port
+    volumes:
+      - repserver-data:/opt/sybase/data
+      - repserver-logs:/opt/sybase/logs
+      - ./scripts:/opt/sybase/scripts:ro
+    environment:
+      - SYBASE=/opt/sybase
+      - RS_SERVER_NAME=REPSERVER
+      - RS_SA_PASSWORD=${RS_SA_PASSWORD:-RepServerP@ss123}
+      - PRIMARY_ASE_HOST=sybase-primary
+      - PRIMARY_ASE_PORT=5000
+      - SECONDARY_ASE_HOST=sybase-secondary
+      - SECONDARY_ASE_PORT=5000
+    depends_on:
+      ase-primary:
+        condition: service_healthy
+      ase-secondary:
+        condition: service_healthy
+    networks:
+      sybase-net:
+        ipv4_address: 172.28.0.12
+    healthcheck:
+      test: ["CMD", "/opt/sybase/scripts/rs_healthcheck.sh"]
+      interval: 30s
+      timeout: 10s
+      retries: 5
+      start_period: 180s
+    restart: unless-stopped
+
+# Named volumes for persistent data
+volumes:
+  ase-primary-data:
+    driver: local
+  ase-primary-logs:
+    driver: local
+  ase-secondary-data:
+    driver: local
+  ase-secondary-logs:
+    driver: local
+  repserver-data:
+    driver: local
+  repserver-logs:
+    driver: local
+
+# Custom network with fixed IPs for reliable inter-container communication
+networks:
+  sybase-net:
+    driver: bridge
+    ipam:
+      driver: default
+      config:
+        - subnet: 172.28.0.0/16
+          gateway: 172.28.0.1

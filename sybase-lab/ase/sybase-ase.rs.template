@@ -1,0 +1,65 @@
+# SAP ASE Server Resource File Template
+# This file is used by srvbuildres to configure the ASE server
+# Variables like ${ASE_SERVER_NAME} will be replaced at runtime
+
+# Server Configuration
+srvbuild.server_name: ${ASE_SERVER_NAME}
+srvbuild.new_config: yes
+srvbuild.do_add_server: yes
+srvbuild.network_protocol_list: tcp
+srvbuild.network_hostname_list: 0.0.0.0
+srvbuild.network_port_list: 5000
+srvbuild.application_type: MIXED
+
+# SA Password
+srvbuild.sa_password: ${ASE_SA_PASSWORD}
+srvbuild.sa_login: sa
+
+# Master Device Configuration
+srvbuild.master_device_physical_name: /opt/sybase/data/master.dat
+srvbuild.master_device_size: 100
+srvbuild.master_database_size: 50
+
+# System Procedures Device
+srvbuild.sybsystemprocs_device_physical_name: /opt/sybase/data/sysprocs.dat
+srvbuild.sybsystemprocs_device_size: 200
+srvbuild.sybsystemprocs_database_size: 200
+
+# System Database Device
+srvbuild.sybsystemdb_device_physical_name: /opt/sybase/data/sybsystemdb.dat
+srvbuild.sybsystemdb_device_size: 10
+srvbuild.sybsystemdb_database_size: 10
+
+# Tempdb Configuration
+srvbuild.tempdb_device_physical_name: /opt/sybase/data/tempdb.dat
+srvbuild.tempdb_device_size: 100
+srvbuild.tempdb_database_size: 100
+
+# Error Log
+srvbuild.errorlog: /opt/sybase/logs/${ASE_SERVER_NAME}.log
+
+# Server Memory Configuration
+srvbuild.default_memory: 512
+srvbuild.max_memory: 1024
+
+# Character Set and Sort Order
+srvbuild.default_characterset: utf8
+srvbuild.default_sortorder: binary
+
+# Page Size (2K, 4K, 8K, or 16K)
+srvbuild.page_size: 4096
+
+# Additional Configuration
+srvbuild.do_upgrade: no
+srvbuild.sybsecurity_device_physical_name: /opt/sybase/data/sybsecurity.dat
+srvbuild.sybsecurity_device_size: 50
+srvbuild.sybsecurity_database_size: 50
+srvbuild.do_configure_sybsecurity: yes
+
+# Backup Server Configuration
+srvbuild.do_configure_backup: yes
+srvbuild.backup_server_name: ${ASE_SERVER_NAME}_BS
+srvbuild.backup_server_network_protocol_list: tcp
+srvbuild.backup_server_network_hostname_list: 0.0.0.0
+srvbuild.backup_server_network_port_list: 5001
+srvbuild.backup_server_errorlog: /opt/sybase/logs/${ASE_SERVER_NAME}_BS.log
